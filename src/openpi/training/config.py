@@ -632,6 +632,13 @@ _CONFIGS = [
         ),
     ),
     #
+    # Inference xarm configs
+    #
+    TrainConfig(
+        name="pi05_xarm",
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True)  
+    ),
+    #
     # Fine-tuning Libero configs.
     #
     # These train configs define the hyperparameters for fine-tuning the base model on your own dataset.
