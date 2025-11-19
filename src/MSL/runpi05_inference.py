@@ -5,11 +5,11 @@ import numpy as np
 import cv2
 import pyrealsense2 as rs
 
-config = _config.get_config("pi05")
-checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
+#config = _config.get_config("pi05")
+#checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir)
+#policy = policy_config.create_trained_policy(config, checkpoint_dir)
 
 #collect observations
 
@@ -41,14 +41,14 @@ pipeline.start(obs_config)
 frames = pipeline.wait_for_frames()
 depth_frame = frames.get_depth_frame()
 color_frame = frames.get_color_frame()
-while not depth_frame or not color_frame:
-    None
+
 
 # Convert images to numpy arrays
 depth_image = np.asanyarray(depth_frame.get_data())
 color_image = np.asanyarray(color_frame.get_data())
 
-print(color_image)
+print(np.shape(color_image))
+# shape is (480, 640, 3)
 """
 try:
     while True:
