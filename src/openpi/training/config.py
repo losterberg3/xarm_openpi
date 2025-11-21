@@ -19,6 +19,7 @@ import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
+import openpi.policies.xarm_policy as xarm_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
@@ -636,7 +637,15 @@ _CONFIGS = [
     #
     TrainConfig(
         name="pi05_xarm",
-        model=pi0_config.Pi0Config(action_horizon=15, pi05=True)  
+        model=pi0_config.Pi0Config(action_horizon=1, pi05=True),
+        data=SimpleDataConfig(
+            assets=AssetsConfig(asset_id="droid"),
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[xarm_policy.XarmInputs(model_type=ModelType.PI05)],
+                outputs=[xarm_policy.XarmOutputs()],
+            ),
+            base_config=DataConfig(norm_stats=None),
+        ),
     ),
     #
     # Fine-tuning Libero configs.
