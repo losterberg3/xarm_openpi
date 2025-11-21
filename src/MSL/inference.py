@@ -1,11 +1,19 @@
 import numpy as np
 import pyrealsense2 as rs
+from xarm.wrapper import XArmAPI
+import cv2
+import time
 
 from openpi.policies import policy_config
 from openpi.shared import download
 from openpi.training import config as _config
 
-# arm = XArmAPI('192.168.1.219')
+arm = XArmAPI('192.168.1.219')
+arm.motion_enable(enable=True)
+arm.set_state(0)
+arm.set_mode(0)
+#arm.set_gripper_enable(enable=True)
+#arm.set_gripper_mode(0)
 
 config = _config.get_config("pi05_xarm")
 checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
@@ -13,110 +21,70 @@ checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_ba
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir)
 
-# collect observations
-"""
+# Connect to cameras
 ctx = rs.context()
 devices = ctx.query_devices()
 
-if len(devices) < 2:
-    raise RuntimeError("Need at least two RealSense cameras connected")
+#if len(devices) < 2:
+    #raise RuntimeError("Need at least two RealSense cameras connected")
 
-# Extract serial numbers
 serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
 print("Found cameras:", serials)
 
 pipelines = []
 configs = []
 
+# Enable streams
 for serial in serials:
     pipeline = rs.pipeline()
     config = rs.config()
-
-    # 2. Bind this config to this specific device
     config.enable_device(serial)
-
-    # 3. Enable streams (color + depth if you want)
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    # Enable streams (color + depth if you want)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
     # config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-
-    # 4. Start pipeline
     pipeline.start(config)
-
     pipelines.append(pipeline)
     configs.append(config)
 
-# 5. Get frames from BOTH cameras
-framesA = pipelines[0].wait_for_frames()
-#framesB = pipelines[1].wait_for_frames()
+#Create action chunk
+while True:
+    frames_wrist = pipelines[0].wait_for_frames()
+    #frames_exterior = pipelines[1].wait_for_frames()
 
-colorA = framesA.get_color_frame()
-#colorB = framesB.get_color_frame()
+    wrist = frames_wrist.get_color_frame()
+    #exterior = frames_exterior.get_color_frame()
 
+    wrist = np.asanyarray(wrist.get_data())
+    #exterior = np.asanyarray(exterior.get_data())
 
-# Configure depth and color streams
-pipeline = rs.pipeline()
-obs_config = rs.config()
-"""
+    wrist = np.flip(wrist, axis=2)
+    #exterior = np.flip(exterior, axis=2)
 
-pipeline = rs.pipeline()
-obs_config = rs.config()
+    a = cv2.resize(wrist, (224, 224))
+    #b = cv2.resize(exterior, (224, 224))
 
-# Get device product line for setting a supporting resolution
-pipeline_wrapper = rs.pipeline_wrapper(pipeline)
-pipeline_profile = obs_config.resolve(pipeline_wrapper)
-device = pipeline_profile.get_device()
-device_product_line = str(device.get_info(rs.camera_info.product_line))
+    code, angles = arm.get_servo_angle(is_radian=True)
+    #code, g_p = arm.get_gripper_position()
+    state = np.array(angles)
+    #g_p = np.array(g_p)
+    print(state)
+    #print(g_p)
+    observation = {
+        "observation/exterior_image": a,
+        "observation/wrist_image": a,
+        "observation/gripper_position": state[6],
+        "observation/joint_position": state[:6],
+        "prompt": "touch the ground",
+    }
 
-found_rgb = False
-for s in device.sensors:
-    if s.get_info(rs.camera_info.name) == "RGB Camera":
-        found_rgb = True
-        break
-if not found_rgb:
-    print("The demo requires Depth camera with Color sensor")
-    exit(0)
+    # Run inference 
+    action_chunk = np.array(policy.infer(observation)["actions"])
 
-# obs_config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-obs_config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-
-# Start streaming
-pipeline.start(obs_config)
-
-frames = pipeline.wait_for_frames()
-# depth_frame = frames.get_depth_frame()
-color_frame = frames.get_color_frame()
-
-# Convert images to numpy arrays
-# depth_image = np.asanyarray(depth_frame.get_data())
-colorA_np = np.asanyarray(color_frame.get_data())
-# colorA_np = np.asanyarray(colorA.get_data())
-# colorB_np = np.asanyarray(colorB.get_data())
-
-rgb_imageA = np.flip(colorA_np, axis=2)
-# rgb_imageB = np.flip(colorB_np, axis=2)
-a = rgb_imageA[np.newaxis, :]
-# b = rgb_imageB[np.newaxis, :]
-# a = cv2.resize(a, (224, 224))
-# code, angles = arm.get_servo_angle(is_radian=True)
-# state_nogrip = np.array(angles, dtype=np.float32)
-state = np.zeros(6)
-g_p = np.zeros(1)
-# state[:7] = state_nogrip
-a = np.zeros((224, 224, 3), dtype=np.float32)
-
-observation = {
-    "observation/exterior_image": a,
-    "observation/wrist_image": a,
-    "observation/gripper_position": g_p,
-    "observation/joint_position": state,
-    "prompt": "touch the ground",
-}
+    #arm.set_servo_angle(angle=action_chunk[0,:6], is_radian=True)
+    #arm.set_gripper_position(action_chunk[0,6])
+    print(action_chunk)
 
 
-# Run inference on a dummy example.
-
-action_chunk = policy.infer(observation)["actions"]
-print(action_chunk)
 """"
 try:
     while True:
