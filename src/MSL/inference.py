@@ -58,12 +58,12 @@ while True:
     #exterior = np.asanyarray(exterior.get_data())
 
     wrist = np.flip(wrist, axis=2)
-    #exterior = np.flip(exterior, axis=2)
+    #exterior = np.flip(exterior, axis=2)to th
 
     a = cv2.resize(wrist, (224, 224))
     #b = cv2.resize(exterior, (224, 224))
 
-    code, angles = arm.get_servo_angle(is_radian=True)
+    code, angles = arm.get_servo_angle(is_radian=False)
     #code, g_p = arm.get_gripper_position()
     state = np.array(angles)
     #g_p = np.array(g_p)
@@ -74,7 +74,7 @@ while True:
         "observation/wrist_image": a,
         "observation/gripper_position": state[6],
         "observation/joint_position": state[:6],
-        "prompt": "touch the ground",
+        "prompt": "move to the cup",
     }
 
     # Run inference 
