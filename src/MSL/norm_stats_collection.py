@@ -4,9 +4,8 @@ import numpy as np
 from xarm.wrapper import XArmAPI
 
 # Connect to your XArm (replace with your robot's IP)
-arm = XArmAPI('192.168.1.123')  
+arm = XArmAPI('192.168.1.219')  
 arm.connect()
-
 
 print("Logging XArm joint + gripper positions...")
 samples = []
