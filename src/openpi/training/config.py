@@ -633,18 +633,20 @@ _CONFIGS = [
         ),
     ),
     #
-    # Inference xarm configs
+    # Inference/fine-tune xarm configs
     #
     TrainConfig(
         name="pi05_xarm",
         model=pi0_config.Pi0Config(action_horizon=1, pi05=True),
         data=SimpleDataConfig(
-            assets=AssetsConfig(asset_id="droid"),
+            assets=AssetsConfig(
+                assets_dir="/path/to/xarm/assets",
+                asset_id="xarm",
+            ), # change this once you have norm stats
             data_transforms=lambda model: _transforms.Group(
                 inputs=[xarm_policy.XarmInputs(model_type=ModelType.PI05)],
                 outputs=[xarm_policy.XarmOutputs()],
-            ),
-            base_config=DataConfig(norm_stats=None),
+            )
         ),
     ),
     #
