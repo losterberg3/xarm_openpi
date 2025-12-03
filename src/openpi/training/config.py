@@ -640,7 +640,7 @@ _CONFIGS = [
         model=pi0_config.Pi0Config(action_horizon=1, pi05=True),
         data=SimpleDataConfig(
             assets=AssetsConfig(
-                assets_dir="/path/to/xarm/assets",
+                assets_dir="/home/larsosterberg/.cache/openpi/openpi-assets/checkpoints/pi05_base/assets/xarm", # this might not be necessary
                 asset_id="xarm",
             ), # change this once you have norm stats
             data_transforms=lambda model: _transforms.Group(
