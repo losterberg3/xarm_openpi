@@ -9,11 +9,14 @@ from openpi.shared import download
 from openpi.training import config as _config
 
 arm = XArmAPI('192.168.1.219')
+if arm.get_state() != 0:
+    arm.clean_error()
+    time.sleep(0.5)
 arm.motion_enable(enable=True)
 arm.set_state(0)
-arm.set_mode(0)
-#arm.set_gripper_enable(enable=True)
-#arm.set_gripper_mode(0)
+arm.set_mode(1)
+arm.set_gripper_enable(enable=True)
+arm.set_gripper_mode(0)
 
 config = _config.get_config("pi05_xarm")
 checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
@@ -30,7 +33,7 @@ devices = ctx.query_devices()
 
 serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
 print("Found cameras:", serials)
-
+# check serials for which camera is which, second one is currently the external viewer
 pipelines = []
 configs = []
 
@@ -41,7 +44,7 @@ for serial in serials:
     config.enable_device(serial)
     # Enable streams (color + depth if you want)
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
-    # config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     pipeline.start(config)
     pipelines.append(pipeline)
     configs.append(config)
@@ -49,40 +52,42 @@ for serial in serials:
 #Create action chunk
 while True:
     frames_wrist = pipelines[0].wait_for_frames()
-    #frames_exterior = pipelines[1].wait_for_frames()
+    frames_exterior = pipelines[1].wait_for_frames()
 
     wrist = frames_wrist.get_color_frame()
-    #exterior = frames_exterior.get_color_frame()
+    exterior = frames_exterior.get_color_frame()
 
     wrist = np.asanyarray(wrist.get_data())
-    #exterior = np.asanyarray(exterior.get_data())
+    exterior = np.asanyarray(exterior.get_data())
 
     wrist = np.flip(wrist, axis=2)
-    #exterior = np.flip(exterior, axis=2)to th
+    exterior = np.flip(exterior, axis=2)
 
     a = cv2.resize(wrist, (224, 224))
-    #b = cv2.resize(exterior, (224, 224))
+    b = cv2.resize(exterior, (224, 224))
 
     code, angles = arm.get_servo_angle(is_radian=False)
-    #code, g_p = arm.get_gripper_position()
+    code, g_p = arm.get_gripper_position()
     state = np.array(angles)
-    #g_p = np.array(g_p)
-    print(state)
-    #print(g_p)
+    g_p = np.array((g_p - 850) / -860)
+
     observation = {
-        "observation/exterior_image": a,
+        "observation/exterior_image": b,
         "observation/wrist_image": a,
-        "observation/gripper_position": state[6],
+        "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": "move to the cup",
+        "prompt": "move forward",
     }
 
     # Run inference 
     action_chunk = np.array(policy.infer(observation)["actions"])
+    cmd_joint_pose = state[:6] + 0.2*action_chunk[0,:6]
+    cmd_gripper_pose = g_p + 0.2*action_chunk[0,6]
 
-    #arm.set_servo_angle(angle=action_chunk[0,:6], is_radian=True)
-    #arm.set_gripper_position(action_chunk[0,6])
-    print(action_chunk)
+    arm.set_servo_angle(angle=cmd_joint_pose, is_radian=True)
+    arm.set_gripper_position(cmd_gripper_pose)
+    print(cmd_joint_pose)
+    time.sleep(0.2)
 
 
 """"

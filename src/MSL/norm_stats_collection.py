@@ -7,6 +7,9 @@ from xarm.wrapper import XArmAPI
 arm = XArmAPI('192.168.1.219')  
 arm.connect()
 
+time.sleep(0.5)
+print(arm.get_gripper_position()[1])
+time.sleep(5)
 print("Logging XArm joint + gripper positions...")
 states = []
 actions = []
@@ -27,7 +30,7 @@ try:
         prev_joints = joints
         prev_gripper = gripper
         print(f"Sampled: {state}")
-        time.sleep(0.05)  # sample at ~20 Hz
+        time.sleep(0.02)  # sample at ~20 Hz
 
 except KeyboardInterrupt:
     print("Stopping logging and computing statistics...")
@@ -37,19 +40,21 @@ data1 = np.array(actions)
 data2 = np.array(states)
 
 norm_stats = {
-    "actions": 
-    {
-        "mean": data1.mean(axis=0).tolist(),
-        "std": data1.std(axis=0).tolist(),
-        "q01": np.quantile(data1, 0.01, axis=0).tolist(),
-        "q99": np.quantile(data1, 0.99, axis=0).tolist(),
-    },
-    "state": 
-    {
-        "mean": data2.mean(axis=0).tolist(),
-        "std": data2.std(axis=0).tolist(),
-        "q01": np.quantile(data2, 0.01, axis=0).tolist(),
-        "q99": np.quantile(data2, 0.99, axis=0).tolist(),
+    "norm_stats": {
+        "actions": 
+        {
+            "mean": data1.mean(axis=0).tolist(),
+            "std": data1.std(axis=0).tolist(),
+            "q01": np.quantile(data1, 0.01, axis=0).tolist(),
+            "q99": np.quantile(data1, 0.99, axis=0).tolist(),
+        },
+        "state": 
+        {
+            "mean": data2.mean(axis=0).tolist(),
+            "std": data2.std(axis=0).tolist(),
+            "q01": np.quantile(data2, 0.01, axis=0).tolist(),
+            "q99": np.quantile(data2, 0.99, axis=0).tolist(),
+        }
     }
 }
 
