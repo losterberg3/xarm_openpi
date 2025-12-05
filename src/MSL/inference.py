@@ -14,12 +14,12 @@ if arm.get_state() != 0:
     time.sleep(0.5)
 arm.motion_enable(enable=True)
 arm.set_state(0)
-arm.set_mode(1)
+arm.set_mode(0)
 arm.set_gripper_enable(enable=True)
 arm.set_gripper_mode(0)
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
+checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_droid")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir)
@@ -50,7 +50,7 @@ for serial in serials:
     configs.append(config)
 
 #Create action chunk
-dt = 0.1 # your timestep, may have to tweak for finer motor control
+dt = 0.2 # your timestep, may have to tweak for finer motor control
 while True:
     frames_wrist = pipelines[0].wait_for_frames()
     frames_exterior = pipelines[1].wait_for_frames()
@@ -77,56 +77,17 @@ while True:
         "observation/wrist_image": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": "move forward",
+        "prompt": "point up",
     }
 
     # Run inference 
     action_chunk = np.array(policy.infer(observation)["actions"])
-    cmd_joint_pose = state[:6] + dt*action_chunk[0,:6]
-    cmd_gripper_pose = (g_p + dt*action_chunk[0,6]) * -860 + 850 # denormalize the gripper action
+    for i in range(0, 50):
+        cmd_joint_pose = state[:6] + action_chunk[i,:6]
+        cmd_gripper_pose = (g_p + action_chunk[i,6]) * -860 + 850 # denormalize the gripper action
+        print(cmd_joint_pose)
+        arm.set_servo_angle(servo_id=8, angle=cmd_joint_pose, is_radian=True) 
+        arm.set_gripper_position(cmd_gripper_pose)
+        time.sleep(0.01)
+ 
 
-    arm.set_servo_angle(angle=cmd_joint_pose, is_radian=True)
-    arm.set_gripper_position(cmd_gripper_pose)
-    print(cmd_joint_pose)
-    time.sleep(dt)
-# denormalize the gripper position, and also make sure we're in radians
-
-""""
-try:
-    while True:
-
-        # Wait for a coherent pair of frames: depth and color
-        frames = pipeline.wait_for_frames()
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        if not depth_frame or not color_frame:
-            continue
-
-        # Convert images to numpy arrays
-        depth_image = np.asanyarray(depth_frame.get_data())
-        color_image = np.asanyarray(color_frame.get_data())
-
-        # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
-        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
-
-        depth_colormap_dim = depth_colormap.shape
-        color_colormap_dim = color_image.shape
-
-        # If depth and color resolutions are different, resize color image to match depth image for display
-        if depth_colormap_dim != color_colormap_dim:
-            resized_color_image = cv2.resize(color_image, dsize=(depth_colormap_dim[1], depth_colormap_dim[0]), interpolation=cv2.INTER_AREA)
-            images = np.hstack((resized_color_image, depth_colormap))
-        else:
-            images = np.hstack((color_image, depth_colormap))
-
-        
-        # Show images
-        cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-        cv2.imshow('RealSense', images)
-        cv2.waitKey(1)
-
-finally:
-
-    # Stop streaming
-    pipeline.stop()
-"""
