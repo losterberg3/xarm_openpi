@@ -50,6 +50,7 @@ for serial in serials:
     configs.append(config)
 
 #Create action chunk
+dt = 0.1 # your timestep, may have to tweak for finer motor control
 while True:
     frames_wrist = pipelines[0].wait_for_frames()
     frames_exterior = pipelines[1].wait_for_frames()
@@ -66,7 +67,7 @@ while True:
     a = cv2.resize(wrist, (224, 224))
     b = cv2.resize(exterior, (224, 224))
 
-    code, angles = arm.get_servo_angle(is_radian=False)
+    code, angles = arm.get_servo_angle(is_radian=True)
     code, g_p = arm.get_gripper_position()
     state = np.array(angles)
     g_p = np.array((g_p - 850) / -860)
@@ -81,14 +82,14 @@ while True:
 
     # Run inference 
     action_chunk = np.array(policy.infer(observation)["actions"])
-    cmd_joint_pose = state[:6] + 0.2*action_chunk[0,:6]
-    cmd_gripper_pose = g_p + 0.2*action_chunk[0,6]
+    cmd_joint_pose = state[:6] + dt*action_chunk[0,:6]
+    cmd_gripper_pose = (g_p + dt*action_chunk[0,6]) * -860 + 850 # denormalize the gripper action
 
     arm.set_servo_angle(angle=cmd_joint_pose, is_radian=True)
     arm.set_gripper_position(cmd_gripper_pose)
     print(cmd_joint_pose)
-    time.sleep(0.2)
-
+    time.sleep(dt)
+# denormalize the gripper position, and also make sure we're in radians
 
 """"
 try:
