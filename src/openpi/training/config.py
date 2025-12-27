@@ -454,10 +454,10 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
         )
 
 @dataclasses.dataclass(frozen=True)
-class LeRobotDROIDDataConfig(DataConfigFactory):
+class LeRobotXarmDataConfig(DataConfigFactory):
     """
-    Example data config for custom DROID dataset in LeRobot format.
-    To convert your custom DROID dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
+    Example data config for custom Xarm dataset in LeRobot format.
+    To convert your custom Xarm dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
     """
 
     @override
@@ -479,8 +479,8 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
         )
         # We assume joint *velocity* actions, so we should *not* apply an additional delta transform.
         data_transforms = _transforms.Group(
-            inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
-            outputs=[droid_policy.DroidOutputs()],
+            inputs=[xarm_policy.XarmInputs(model_type=model_config.model_type)],
+            outputs=[xarm_policy.XarmOutputs()],
         )
         model_transforms = ModelTransformFactory()(model_config)
 
@@ -671,7 +671,7 @@ _CONFIGS = [
         ),
     ),
     #
-    # Inference/fine-tune xarm configs
+    # Inference xarm configs
     #
     TrainConfig(
         name="pi05_xarm",
@@ -974,6 +974,32 @@ _CONFIGS = [
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
+        num_train_steps=20_000,
+        batch_size=32,
+    ),
+    #
+    # Fine-tuning xarm configs
+    #
+    TrainConfig(
+        # This config is for fine-tuning pi05-Xarm on a custom (smaller) Xarm dataset.
+        # Here, we use LeRobot data format (like for all other fine-tuning examples)
+        name="pi05_xarm_finetune",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotXarmDataConfig(
+            # Replace with your custom Xarm LeRobot dataset repo id.
+            repo_id="your_hf_username/my_xarm_dataset",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                # Important: reuse the original Xarm norm stats during fine-tuning!
+                assets_dir="/home/larsosterberg/.cache/openpi/openpi-assets/checkpoints/pi05_base/assets/xarm", # this might not be necessary
+                asset_id="xarm",
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/larsosterberg/.cache/openpi/openpi-assets/checkpoints/pi05_base/params"), #check this
         num_train_steps=20_000,
         batch_size=32,
     ),

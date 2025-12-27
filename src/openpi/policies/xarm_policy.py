@@ -7,8 +7,8 @@ from openpi import transforms
 from openpi.models import model as _model
 
 
-def make_droid_example() -> dict:
-    """Creates a random input example for the Droid policy."""
+def make_xarm_example() -> dict:
+    """Creates a random input example for the Xarm policy."""
     return {
         "observation/exterior_image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
         "observation/wrist_image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
