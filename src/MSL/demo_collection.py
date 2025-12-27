@@ -1,8 +1,10 @@
 import time
 import numpy as np
 import pyrealsense2 as rs
-from lerobot.dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.constants import HF_LEROBOT_HOME
 from xarm.wrapper import XArmAPI
+from pathlib import Path
 
 # ------------------------
 # Config
@@ -12,7 +14,10 @@ FPS = 20
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
-TASK_DESCRIPTION = "Pick up the object and place it in the bin"
+TASK_DESCRIPTION = "Rotate the gripper"
+
+START_FLAG = Path("/tmp/start_demo")
+STOP_FLAG  = Path("/tmp/stop_demo")
 
 # ------------------------
 # Init robot + cameras
@@ -53,56 +58,85 @@ def read_cameras():
 # ------------------------
 # Create dataset
 # ------------------------
-dataset = LeRobotDataset.create(
-    repo_id=REPO_NAME,
-    robot_type="xarm",
-    fps=FPS,
-    features={
-        "exterior_image_1_left": {
-            "dtype": "image",
-            "shape": (480, 640, 3),
-            "names": ["height", "width", "channel"],
-        },
-        "exterior_image_2_left": { # this one is not used, put it as zeros or something
-            "dtype": "image",
-            "shape": (480, 640, 3),
-            "names": ["height", "width", "channel"],
-        },
-        "wrist_image_left": {
-            "dtype": "image",
-            "shape": (480, 640, 3),
-            "names": ["height", "width", "channel"],
-        },
-        "joint_position": {
-            "dtype": "float32",
-            "shape": (6,),
-            "names": ["joint_position"],
-        },
-        "gripper_position": {
-            "dtype": "float32",
-            "shape": (1,),
-            "names": ["gripper_position"],
-        },
-        "actions": {
-            "dtype": "float32",
-            "shape": (7,),  # We will use joint *velocity* actions here (6D) + gripper position (1D)
-            "names": ["actions"],
-        },
-    },
-)
 
-print("Dataset created")
+dataset_path = HF_LEROBOT_HOME / REPO_NAME
+
+if dataset_path.exists(): 
+    dataset = LeRobotDataset(
+        root=dataset_path,
+        repo_id=REPO_NAME,
+    )
+    print("Adding to existing dataset, waiting for signal.")
+else:
+    dataset = LeRobotDataset.create(
+        repo_id=REPO_NAME,
+        robot_type="xarm",
+        fps=FPS,
+        features={
+            "exterior_image_1_left": {
+                "dtype": "image",
+                "shape": (480, 640, 3),
+                "names": ["height", "width", "channel"],
+            },
+            "exterior_image_2_left": { # this one is not used, put it as zeros or something
+                "dtype": "image",
+                "shape": (480, 640, 3),
+                "names": ["height", "width", "channel"],
+            },
+            "wrist_image_left": {
+                "dtype": "image",
+                "shape": (480, 640, 3),
+                "names": ["height", "width", "channel"],
+            },
+            "joint_position": {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": ["joint_position"],
+            },
+            "gripper_position": {
+                "dtype": "float32",
+                "shape": (1,),
+                "names": ["gripper_position"],
+            },
+            "actions": {
+                "dtype": "float32",
+                "shape": (7,),  # We will use joint *velocity* actions here (6D) + gripper position (1D)
+                "names": ["actions"],
+            },
+        },
+    )
+    print("Dataset created, waiting for start signal.")
 
 # ------------------------
 # Collect episode
 # ------------------------
-print("Starting demo collection. Press Ctrl+C to stop.")
-prev_joints = arm.get_servo_angle(is_radian=True)[1][:6]
-prev_gripper = (arm.get_gripper_position()[1] - 850) / -860
-prev = np.array(prev_joints + [prev_gripper], dtype=np.float32)
+
+recording = False
+prev = None
 
 try:
     while True:
+        if START_FLAG.exists() and not recording:
+            START_FLAG.unlink()
+            print("Starting demo")
+
+            prev_joints = arm.get_servo_angle(is_radian=True)[1][:6]
+            prev_gripper = (arm.get_gripper_position()[1] - 850) / -860
+            prev = np.array(prev_joints + [prev_gripper], dtype=np.float32)
+            recording = True
+
+        if STOP_FLAG.exists() and recording:
+            STOP_FLAG.unlink()
+            print("Ending demo")
+            prev = None
+            recording = False
+            dataset.save_episode()
+            print("Episode saved")
+
+        if not recording:
+            time.sleep(0.05)
+            continue
+
         start = time.perf_counter()
 
         # ---- Observation ----
@@ -119,8 +153,8 @@ try:
         # ---- Write frame ----
         dataset.add_frame(
             {
-                "joint_position": np.array(joints, dtype=np.float32),
-                "gripper_position": np.array(gripper, dtype=np.float32),
+                "joint_position": np.asarray(joints, dtype=np.float32),
+                "gripper_position": np.asarray([gripper], dtype=np.float32),
                 "actions": action,
                 "exterior_image_1_left": base,
                 "exterior_image_2_left": base2,
@@ -134,11 +168,9 @@ try:
         time.sleep(max(0.0, DT - elapsed))
 
 except KeyboardInterrupt:
-    print("Stopping demo...")
+    print("Shutting down")
 
-# ------------------------
-# Save episode
-# ------------------------
-dataset.save_episode()
-arm.disconnect()
-print("Episode saved ✔")
+finally:
+    for p in pipelines:
+        p.stop()
+    arm.disconnect()
