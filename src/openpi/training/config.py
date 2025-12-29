@@ -981,28 +981,33 @@ _CONFIGS = [
     # Fine-tuning xarm configs
     #
     TrainConfig(
-        # This config is for fine-tuning pi05-Xarm on a custom (smaller) Xarm dataset.
+        # This config is for fine-tuning pi05-Xarm on a custom Xarm dataset.
         # Here, we use LeRobot data format (like for all other fine-tuning examples)
         name="pi05_xarm_finetune",
         model=pi0_config.Pi0Config(
             pi05=True,
-            action_dim=32,  # pi05 is trained with 32-dim actions
-            action_horizon=16,
+            action_dim=7,  # xarm has 7 action dimesnions
+            action_horizon=30,
         ),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            repo_id="your_hf_username/my_xarm_dataset",
+            repo_id="your_hf_username/my_xarm_dataset",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
-                # Important: reuse the original Xarm norm stats during fine-tuning!
+                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
+                # Then possibly use those norm stats and change below
                 assets_dir="/home/larsosterberg/.cache/openpi/openpi-assets/checkpoints/pi05_base/assets/xarm", # this might not be necessary
                 asset_id="xarm",
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/home/larsosterberg/.cache/openpi/openpi-assets/checkpoints/pi05_base/params"), #check this
-        num_train_steps=20_000,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
+        num_train_steps=12_000,
         batch_size=32,
     ),
+    # then to run training ->
+    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_test --overwrite
+
+
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
     #
