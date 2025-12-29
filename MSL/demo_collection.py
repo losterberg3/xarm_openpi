@@ -14,6 +14,7 @@ FPS = 20
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
+todo
 TASK_DESCRIPTION = "Rotate the gripper"
 
 START_FLAG = Path("/tmp/start_demo")

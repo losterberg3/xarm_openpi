@@ -52,6 +52,7 @@ try:
 
         depth_colormap_dim = depth_colormap.shape
         color_colormap_dim = color_image.shape
+        print(depth_colormap_dim)
 
         # If depth and color resolutions are different, resize color image to match depth image for display
         if depth_colormap_dim != color_colormap_dim:
