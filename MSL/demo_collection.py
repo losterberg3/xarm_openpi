@@ -14,8 +14,7 @@ FPS = 10
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
-todo
-TASK_DESCRIPTION = "Rotate the gripper"
+TASK_DESCRIPTION = "Grab the yellow bottle and place it on the pink marker"
 
 START_FLAG = Path("/tmp/start_demo")
 STOP_FLAG  = Path("/tmp/stop_demo")
