@@ -41,8 +41,8 @@ class XarmInputs(transforms.DataTransformFn):
 
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference
-        base_image = _parse_image(data["observation/exterior_image"])
-        wrist_image = _parse_image(data["observation/wrist_image"])
+        base_image = _parse_image(data["observation/exterior_image_1_left"])
+        wrist_image = _parse_image(data["observation/wrist_image_left"])
 
         match self.model_type:
             case _model.ModelType.PI0 | _model.ModelType.PI05:

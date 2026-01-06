@@ -986,23 +986,33 @@ _CONFIGS = [
         name="pi05_xarm_finetune",
         model=pi0_config.Pi0Config(
             pi05=True,
-            action_dim=7,  # xarm has 7 action dimesnions
+            action_dim=32,  # xarm has 7 action dimesnions
             action_horizon=30,
+            paligemma_variant="gemma_2b_lora", 
+            action_expert_variant="gemma_300m_lora"
         ),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            repo_id="your_hf_username/my_xarm_dataset",  # change this
+            repo_id="lars/xarm_demos",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
-                assets_dir="/home/larsosterberg/.cache/openpi/openpi-assets/checkpoints/pi05_base/assets/xarm", # this might not be necessary
-                asset_id="xarm",
+                assets_dir="/home/larsosterberg/MSL/openpi/assets/pi05_xarm_finetune", # this might not be necessary
+                #asset_id="xarm_demos",
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
-        num_train_steps=12_000,
-        batch_size=32,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,  # xarm has 7 action dimesnions
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora", 
+            action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=3_000,
+        batch_size=16,
     ),
     # then to run training ->
     # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_test --overwrite
