@@ -1012,6 +1012,8 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,
         num_train_steps=3_000,
+        save_interval=3_000,
+        #overwrite=True, #keep track of this for storage issues
         batch_size=16,
     ),
     # then to run training ->
