@@ -19,7 +19,7 @@ arm.set_gripper_enable(enable=True)
 arm.set_gripper_mode(0)
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_droid")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_test/2999")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir)
@@ -49,9 +49,7 @@ for serial in serials:
     pipelines.append(pipeline)
     configs.append(config)
 
-#Create action chunk
-dt = 0.2 # your timestep, may have to tweak for finer motor control
-while True:
+def get_observation():
     frames_wrist = pipelines[0].wait_for_frames()
     frames_exterior = pipelines[1].wait_for_frames()
 
@@ -73,21 +71,34 @@ while True:
     g_p = np.array((g_p - 850) / -860)
 
     observation = {
-        "observation/exterior_image": b,
-        "observation/wrist_image": a,
+        "observation/exterior_image_1_left": b,
+        "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": "point up",
+        "prompt": "grab the yellow bottle and place it one the pink marker",
     }
+    return observation
+
+#Create action chunk
+dt = 0.2 # your timestep, may have to tweak for finer motor control
+while True:
+    observation = get_observation()
 
     # Run inference 
-    action_chunk = np.array(policy.infer(observation)["actions"])
-    for i in range(0, 50):
-        cmd_joint_pose = state[:6] + action_chunk[i,:6]
-        cmd_gripper_pose = (g_p + action_chunk[i,6]) * -860 + 850 # denormalize the gripper action
-        print(cmd_joint_pose)
-        arm.set_servo_angle(servo_id=8, angle=cmd_joint_pose, is_radian=True) 
-        arm.set_gripper_position(cmd_gripper_pose)
-        time.sleep(0.01)
+    action = np.array(policy.infer(observation)["actions"])
+    
+    code, angles = arm.get_servo_angle(is_radian=True)
+    code, g_p = arm.get_gripper_position()
+    state = np.array(angles)
+    g_p = np.array((g_p - 850) / -860)
+
+    delta = np.clip(action[0,:6], -0.02, 0.02)
+    cmd_joint_pose = state[:6] + delta
+
+    cmd_gripper_pose = (g_p + action[0,6]) * -860 + 850 # denormalize the gripper action
+    print(cmd_joint_pose)
+    arm.set_servo_angle(servo_id=8, angle=cmd_joint_pose, is_radian=True) 
+    arm.set_gripper_position(cmd_gripper_pose)
+    time.sleep(0.02)
  
 
