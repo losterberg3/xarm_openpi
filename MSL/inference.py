@@ -78,7 +78,7 @@ def get_observation():
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": "grab the yellow bottle and place it one the pink marker",
+        "prompt": "grab the yellow bottle and place it on the pink marker",
     }
     return observation
 
@@ -89,9 +89,13 @@ while True:
 
     # Run inference 
     print("Running inference")
-    action = np.array(policy.infer(observation)["actions"])
-    count = 0
+    inference = policy.infer(observation)
+    action = np.array(inference["actions"])
+    text_tokens = inference["text_tokens"]
 
+    print(text_tokens)
+
+    count = 0
     while count < 20:
         t0 = time.perf_counter()
 
