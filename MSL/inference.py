@@ -92,7 +92,6 @@ while True:
     inference = policy.infer(observation)
     action = np.array(inference["actions"])
     text_tokens = inference["text_tokens"]
-
     print(text_tokens)
 
     count = 0
