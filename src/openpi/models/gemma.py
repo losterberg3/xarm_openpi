@@ -386,6 +386,10 @@ class Module(nn.Module):
         return self.embedder.encode(tokens).astype(self.embed_dtype)
 
     @at.typecheck
+    def decode_to_logits(self, hidden_states: at.Float[at.Array, "t d"]) -> at.Float[at.Array, "t v"]:
+        return self.embedder.decode(hidden_states.astype(jnp.float32))
+
+    @at.typecheck
     def __call__(
         self,
         # list of token arrays, one for each expert, or None if that expert should not be run

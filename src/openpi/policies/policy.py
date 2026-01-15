@@ -62,6 +62,7 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
+            self._sample_text = model.sample_text
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -89,9 +90,13 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
+        text, kv_cache = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+        #text = None
+        actions = self._sample_actions(sample_rng_or_pytorch_device, observation, kv_cache=kv_cache, **sample_kwargs)
         outputs = {
             "state": inputs["state"],
-            "actions": self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs),
+            "actions": actions,
+            "text_tokens": text,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:

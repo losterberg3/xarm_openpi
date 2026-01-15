@@ -78,4 +78,6 @@ class XarmInputs(transforms.DataTransformFn):
 class XarmOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first 7 dims.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        return {"actions": np.asarray(data["actions"][:, :7]),
+        "text_tokens": data["text_tokens"],
+        }
