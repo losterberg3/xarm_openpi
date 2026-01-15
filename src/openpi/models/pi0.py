@@ -227,12 +227,13 @@ class Pi0(_model.BaseModel):
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
         
+        # first fill KV cache with a forward pass of the prefix
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+        positions = jnp.cumsum(prefix_mask, axis=1) - 1
+
         # if kv_cache hasn't been precomputed in sample_text
         if kv_cache is None:
-            # first fill KV cache with a forward pass of the prefix
-            prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
-            prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
-            positions = jnp.cumsum(prefix_mask, axis=1) - 1
             _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
     
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
@@ -300,9 +301,8 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-        (prefix_out, suffix_out), kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
-        print("suffix")
-        print(suffix_out)
+        (prefix_out, _), kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+        
         initial_kv_cache = kv_cache        
         cache = kv_cache
         prefix_len = jnp.sum(prefix_mask[0]).astype(int)
@@ -317,13 +317,16 @@ class Pi0(_model.BaseModel):
         def text_step(carry):
             step, last_token, cache, history, is_finished = carry
 
-            pos = prefix_len + step - 1
-            pos_input = jnp.array([[pos]], dtype=jnp.int32)
+            cache_len = cache[0].shape[2]
 
-            token_input = jnp.reshape(last_token, (1, 1))
+            # position of the new token
+            pos_input = jnp.array([[cache_len]], dtype=jnp.int32)
+
+            token_input = jnp.reshape(last_token, (1,1))
             embedded_token = self.PaliGemma.llm(token_input, method="embed")
 
-            mask = jnp.ones((1, 1, pos), dtype=jnp.bool_)
+            # allow attention to all cached keys + this token
+            mask = jnp.ones((1, 1, cache_len + 1), dtype=jnp.bool_)
 
             (out, _), new_cache = self.PaliGemma.llm(
                 [embedded_token, None], 
