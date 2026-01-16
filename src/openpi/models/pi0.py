@@ -13,6 +13,7 @@ from openpi.models import pi0_config
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
+from openpi.models.tokenizer import PaligemmaTokenizer
 
 logger = logging.getLogger("openpi")
 
@@ -102,6 +103,7 @@ class Pi0(_model.BaseModel):
 
         # This attribute gets automatically set by model.train() and model.eval().
         self.deterministic = True
+        self.prompt_length = None
 
     @at.typecheck
     def embed_prefix(
@@ -124,6 +126,8 @@ class Pi0(_model.BaseModel):
             )
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
+
+        self.prompt_length = jnp.sum(obs.tokenized_prompt_mask, axis=-1)[0].astype(int)
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -271,7 +275,6 @@ class Pi0(_model.BaseModel):
                 kv_cache=kv_cache,
                 adarms_cond=[None, adarms_cond],
             )
-            print(suffix_out)
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
@@ -292,7 +295,7 @@ class Pi0(_model.BaseModel):
         observation: _model.Observation,
         text_history: at.Int[at.Array, "b t"] | None = None, 
         *,
-        max_text_len: int = 20,
+        max_text_len: int = 40,
     ) -> tuple[_model.Text, Any]:  # not sure the type of kv_cache, the at.Float
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
@@ -301,32 +304,48 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-        (prefix_out, _), kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+        
+        (prefix_out, _), kv_cache = self.PaliGemma.llm(
+            [prefix_tokens, None], 
+            mask=prefix_attn_mask, 
+            positions=positions
+        )
         
         initial_kv_cache = kv_cache        
         cache = kv_cache
-        prefix_len = jnp.sum(prefix_mask[0]).astype(int)
-        last_token = jnp.argmax(self.PaliGemma.llm(prefix_out[0][-1:, :], method="decode_to_logits"), axis=-1)
-        token_history = jnp.zeros((1, max_text_len), dtype=jnp.int32)
+
+        prefix_len = jnp.sum(prefix_mask, axis=-1).astype(int)
+
+        all_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
+        first_token_logits = all_logits[-200+self.prompt_length:-200+self.prompt_length+1, :] # will change this
+        last_token = jnp.argmax(first_token_logits, axis=-1)
+
+        token_history = jnp.zeros((batch_size, max_text_len), dtype=jnp.int32)
         token_history = token_history.at[:, 0].set(last_token)
-        
-        # start at step 1 since we have already run a forward pass once
-        is_finished = jnp.array([False])
-        step = 1
+    
+        step = 1 # start at step 1 since we already ran one forward pass
 
         def text_step(carry):
-            step, last_token, cache, history, is_finished = carry
+            step, last_token, cache, history = carry
 
-            cache_len = cache[0].shape[2]
-
-            # position of the new token
-            pos_input = jnp.array([[cache_len]], dtype=jnp.int32)
+            pos_input = jnp.array([[prefix_len[0] + step - 1]], dtype=jnp.int32)
 
             token_input = jnp.reshape(last_token, (1,1))
             embedded_token = self.PaliGemma.llm(token_input, method="embed")
 
-            # allow attention to all cached keys + this token
-            mask = jnp.ones((1, 1, cache_len + 1), dtype=jnp.bool_)
+            extended_mask = prefix_mask  # This is (1, 968) with True for valid, False for padding
+        
+            # Add mask for all generated tokens (all True since they're all valid)
+            # Shape: (batch, step)
+            generated_mask = jnp.ones((batch_size, step), dtype=jnp.bool_)
+            
+            # Concatenate to get full mask: prefix + generated tokens
+            # Shape: (batch, cache_len + step)
+            full_mask = jnp.concatenate([extended_mask, generated_mask], axis=1)
+            
+            # Reshape for attention: (batch, 1, cache_len + step)
+            # The new token (query) can attend to positions where mask is True
+            mask = full_mask[:, None, :]
 
             (out, _), new_cache = self.PaliGemma.llm(
                 [embedded_token, None], 
@@ -334,20 +353,31 @@ class Pi0(_model.BaseModel):
                 positions=pos_input,
                 kv_cache=cache
             )
-
             logits = self.PaliGemma.llm(out[0], method="decode_to_logits")
-            next_token = jnp.argmax(logits[:, -1], axis=-1)
+            # it's either this or new tokens always get appended to the end
+            #token_idx = -182 + step
+            # it just produces one token
+            next_token = jnp.argmax(logits[0], axis=-1)
             
-            # Update history and check for EOS (assuming 1 is EOS)
-            new_history = history.at[:, step].set(next_token)
-            new_is_finished = is_finished | (next_token == 1) 
+            # Update history
+            new_history = history.at[:, step].set(next_token) 
+
+            print(next_token)
+
+            tokenizer = PaligemmaTokenizer(max_len=200)  # Or whatever max_len you're using
+    
+            tokens_list = next_token.tolist()  # Get first batch element as Python list
+            decoded_text = tokenizer._tokenizer.decode(tokens_list)
+
+            print(f"Generated text: {decoded_text}")
+
             
-            return (step + 1, next_token, new_cache, new_history, new_is_finished)
+            return (step + 1, next_token, new_cache, new_history)
 
         # can't use a jax loop with dynamic mask arrays
-        while step < max_text_len and not bool(is_finished[0]):
-            step, last_token, cache, token_history, is_finished = text_step(
-                (step, last_token, cache, token_history, is_finished)
+        while step < max_text_len or last_token!=1:
+            step, last_token, cache, token_history = text_step(
+                (step, last_token, cache, token_history)
             )
 
         # we return kv_cache from first pass so it can be used by sample actions

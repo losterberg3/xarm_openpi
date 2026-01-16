@@ -1,12 +1,13 @@
 import numpy as np
 import pyrealsense2 as rs
-from xarm.wrapper import XArmAPI
+#from xarm.wrapper import XArmAPI
 import cv2
 import time
 
 from openpi.policies import policy_config
 from openpi.shared import download
 from openpi.training import config as _config
+from openpi.models.tokenizer import PaligemmaTokenizer
 
 """
 arm = XArmAPI('192.168.1.219')
@@ -60,6 +61,9 @@ def get_observation():
     a = np.asanyarray(wrist.get_data())
     b = np.asanyarray(exterior.get_data())
 
+    #a = np.zeros((3, 640, 480), dtype=float)
+    #b = a
+
     state = np.array([-0.20991884171962738,
         0.2138545662164688,
         -0.9285001158714294,
@@ -78,7 +82,7 @@ def get_observation():
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": "grab the yellow bottle and place it on the pink marker",
+        "prompt": "Describe the scene please.",
     }
     return observation
 
@@ -93,6 +97,13 @@ while True:
     action = np.array(inference["actions"])
     text_tokens = inference["text_tokens"]
     print(text_tokens)
+
+    tokenizer = PaligemmaTokenizer(max_len=200)  # Or whatever max_len you're using
+    
+    tokens_list = text_tokens #.tolist()  # Get first batch element as Python list
+    decoded_text = tokenizer._tokenizer.decode(tokens_list)
+
+    print(f"Generated text: {decoded_text}")
 
     count = 0
     while count < 20:
