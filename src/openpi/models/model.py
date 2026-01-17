@@ -140,7 +140,7 @@ class Observation(Generic[ArrayT]):
 # produced by the data transforms.
 Actions = at.Float[ArrayT, "*b ah ad"]
 # format of text tokens produced by inference
-Text = at.Int[ArrayT, "b 20"]
+Text = at.Int[ArrayT, "b t"]
 
 
 def preprocess_observation(

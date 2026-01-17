@@ -295,8 +295,8 @@ class Pi0(_model.BaseModel):
         observation: _model.Observation,
         text_history: at.Int[at.Array, "b t"] | None = None, 
         *,
-        max_text_len: int = 40,
-    ) -> tuple[_model.Text, Any]:  # not sure the type of kv_cache, the at.Float
+        max_text_len: int = 50,
+    ) -> tuple[_model.Text, Any]:  
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
         
@@ -311,6 +311,7 @@ class Pi0(_model.BaseModel):
             positions=positions
         )
         
+        # not sure if it does pass by reference or not
         initial_kv_cache = kv_cache        
         cache = kv_cache
 
@@ -332,19 +333,10 @@ class Pi0(_model.BaseModel):
 
             token_input = jnp.reshape(last_token, (1,1))
             embedded_token = self.PaliGemma.llm(token_input, method="embed")
-
-            extended_mask = prefix_mask  # This is (1, 968) with True for valid, False for padding
-        
-            # Add mask for all generated tokens (all True since they're all valid)
-            # Shape: (batch, step)
             generated_mask = jnp.ones((batch_size, step), dtype=jnp.bool_)
-            
-            # Concatenate to get full mask: prefix + generated tokens
-            # Shape: (batch, cache_len + step)
-            full_mask = jnp.concatenate([extended_mask, generated_mask], axis=1)
+            full_mask = jnp.concatenate([prefix_mask, generated_mask], axis=1)
             
             # Reshape for attention: (batch, 1, cache_len + step)
-            # The new token (query) can attend to positions where mask is True
             mask = full_mask[:, None, :]
 
             (out, _), new_cache = self.PaliGemma.llm(
@@ -354,24 +346,16 @@ class Pi0(_model.BaseModel):
                 kv_cache=cache
             )
             logits = self.PaliGemma.llm(out[0], method="decode_to_logits")
-            # it's either this or new tokens always get appended to the end
-            #token_idx = -182 + step
-            # it just produces one token
             next_token = jnp.argmax(logits[0], axis=-1)
             
             # Update history
             new_history = history.at[:, step].set(next_token) 
 
-            print(next_token)
-
-            tokenizer = PaligemmaTokenizer(max_len=200)  # Or whatever max_len you're using
-    
-            tokens_list = next_token.tolist()  # Get first batch element as Python list
+            tokenizer = PaligemmaTokenizer(max_len=200)
+            tokens_list = next_token.tolist()
             decoded_text = tokenizer._tokenizer.decode(tokens_list)
+            print(f"{decoded_text}")
 
-            print(f"Generated text: {decoded_text}")
-
-            
             return (step + 1, next_token, new_cache, new_history)
 
         # can't use a jax loop with dynamic mask arrays

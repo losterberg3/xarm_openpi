@@ -77,34 +77,39 @@ def get_observation():
     #state = np.array(angles)
     #g_p = np.array((g_p - 850) / -860)
 
+    prompt = input("Enter prompt for this observation: ").strip()
+
     observation = {
         "observation/exterior_image_1_left": b,
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": "Describe the scene please.",
+        "prompt": prompt,
     }
     return observation
 
 #Create action chunk
 dt = 0.1 # your timestep, may have to tweak for finer motor control
 while True:
-    observation = get_observation()
+    try:
+        observation = get_observation()
 
-    # Run inference 
-    print("Running inference")
-    inference = policy.infer(observation)
-    action = np.array(inference["actions"])
-    text_tokens = inference["text_tokens"]
-    print(text_tokens)
+        print("Running inference")
+        inference = policy.infer(observation)
 
-    tokenizer = PaligemmaTokenizer(max_len=200)  # Or whatever max_len you're using
+    except KeyboardInterrupt:
+        print("\nInference interrupted, continuing loop...")
+        continue
+    #action = np.array(inference["actions"])
+    #text_tokens = inference["text_tokens"]
+
+    #tokenizer = PaligemmaTokenizer(max_len=200)  # Or whatever max_len you're using
     
-    tokens_list = text_tokens #.tolist()  # Get first batch element as Python list
-    decoded_text = tokenizer._tokenizer.decode(tokens_list)
+    #tokens_list = text_tokens #.tolist()  # Get first batch element as Python list
+    #decoded_text = tokenizer._tokenizer.decode(tokens_list)
 
-    print(f"Generated text: {decoded_text}")
-
+    #print(f"Generated text: {decoded_text}")
+    """
     count = 0
     while count < 20:
         t0 = time.perf_counter()
@@ -133,5 +138,6 @@ while True:
         count += 1
         time_left = dt - (time.perf_counter() - t0)
         time.sleep(max(time_left,0))
+    """
  
 
