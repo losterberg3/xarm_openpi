@@ -354,7 +354,7 @@ class Pi0(_model.BaseModel):
             tokenizer = PaligemmaTokenizer(max_len=200)
             tokens_list = next_token.tolist()
             decoded_text = tokenizer._tokenizer.decode(tokens_list)
-            print(f"{decoded_text}")
+            print(f"{decoded_text}", end="", flush=True)
 
             return (step + 1, next_token, new_cache, new_history)
 
