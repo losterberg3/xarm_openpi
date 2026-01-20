@@ -33,6 +33,7 @@ class Policy(BasePolicy):
         metadata: dict[str, Any] | None = None,
         pytorch_device: str = "cpu",
         is_pytorch: bool = False,
+        language_out: bool = False,
     ):
         """Initialize the Policy.
 
@@ -90,7 +91,10 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
-        text, kv_cache = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+        if language_out:
+            text, kv_cache = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+        else:
+            text = 1
         actions = self._sample_actions(sample_rng_or_pytorch_device, observation, kv_cache=kv_cache, **sample_kwargs)
         outputs = {
             "state": inputs["state"],

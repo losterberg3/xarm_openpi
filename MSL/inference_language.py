@@ -1,6 +1,5 @@
 import numpy as np
 import pyrealsense2 as rs
-#from xarm.wrapper import XArmAPI
 import cv2
 import time
 
@@ -9,33 +8,23 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-"""
-arm = XArmAPI('192.168.1.219')
-if arm.get_state() != 0:
-    arm.clean_error()
-    time.sleep(0.5)
-arm.motion_enable(enable=True)
-arm.set_mode(0)
-arm.set_state(0)
-arm.set_gripper_enable(enable=True)
-arm.set_gripper_mode(0)
-"""
-
 config = _config.get_config("pi05_xarm")
 checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_test/2999")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir)
+policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=True)
+# make sure to edit tokenizer.py if you want language to only include the prompt
 
 # Connect to cameras
 ctx = rs.context()
 devices = ctx.query_devices()
 
-#if len(devices) < 2:
-    #raise RuntimeError("Need at least two RealSense cameras connected")
+if len(devices) < 2:
+    raise RuntimeError("Need at least two RealSense cameras connected")
 
 serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
 print("Found cameras:", serials)
+
 # check serials for which camera is which, second one is currently the external viewer
 pipelines = []
 configs = []
@@ -61,9 +50,8 @@ def get_observation():
     a = np.asanyarray(wrist.get_data())
     b = np.asanyarray(exterior.get_data())
 
-    #a = np.zeros((3, 640, 480), dtype=float)
-    #b = a
-
+    # use norm stats for state, this doesn't end up going anywhere
+    # since we omit it from the prompt
     state = np.array([-0.20991884171962738,
         0.2138545662164688,
         -0.9285001158714294,
@@ -72,10 +60,6 @@ def get_observation():
         3.5203089714050293])
 
     g_p = np.array([0.22542054951190948])
-    #code, angles = arm.get_servo_angle(is_radian=True)
-    #code, g_p = arm.get_gripper_position()
-    #state = np.array(angles)
-    #g_p = np.array((g_p - 850) / -860)
 
     prompt = input("Enter prompt for this observation: ").strip()
 
@@ -88,8 +72,7 @@ def get_observation():
     }
     return observation
 
-#Create action chunk
-dt = 0.1 # your timestep, may have to tweak for finer motor control
+# query the policy
 while True:
     try:
         observation = get_observation()
@@ -100,44 +83,6 @@ while True:
     except KeyboardInterrupt:
         print("\nInference interrupted, continuing loop...")
         continue
-    #action = np.array(inference["actions"])
-    #text_tokens = inference["text_tokens"]
-
-    #tokenizer = PaligemmaTokenizer(max_len=200)  # Or whatever max_len you're using
     
-    #tokens_list = text_tokens #.tolist()  # Get first batch element as Python list
-    #decoded_text = tokenizer._tokenizer.decode(tokens_list)
-
-    #print(f"Generated text: {decoded_text}")
-    """
-    count = 0
-    while count < 20:
-        t0 = time.perf_counter()
-
-        state = np.array([-0.20991884171962738,
-            0.2138545662164688,
-            -0.9285001158714294,
-            -0.39744529128074646,
-            -0.06720831245183945,
-            3.5203089714050293])
-
-        g_p = np.array([0.22542054951190948])
-        #code, angles = arm.get_servo_angle(is_radian=True)
-        #code, g_p = arm.get_gripper_position()
-        #state = np.array(angles)
-        #g_p = np.array((g_p - 850) / -860)
-
-        delta = np.array(action[count,:6])
-        cmd_joint_pose = state[:6] + delta
-
-        cmd_gripper_pose = (g_p + action[count,6]) * -860 + 850 # denormalize the gripper action
-        #print(cmd_joint_pose)
-        #arm.set_servo_angle(servo_id=8, angle=cmd_joint_pose, is_radian=True) 
-        #arm.set_gripper_position(cmd_gripper_pose)
-
-        count += 1
-        time_left = dt - (time.perf_counter() - t0)
-        time.sleep(max(time_left,0))
-    """
  
 

@@ -1011,14 +1011,14 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
         ema_decay=None,
-        num_train_steps=3_000,
-        save_interval=3_000,
-        #overwrite=True, #keep track of this for storage issues
+        num_train_steps=30_000,
+        save_interval=2_000,
+        overwrite=True, #keep track of this for storage issues
         batch_size=16,
+        wandb_enabled=True,
     ),
     # then to run training ->
     # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_test --overwrite
-
 
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.

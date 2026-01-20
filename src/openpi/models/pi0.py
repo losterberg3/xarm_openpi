@@ -103,7 +103,6 @@ class Pi0(_model.BaseModel):
 
         # This attribute gets automatically set by model.train() and model.eval().
         self.deterministic = True
-        self.prompt_length = None
 
     @at.typecheck
     def embed_prefix(
@@ -127,7 +126,7 @@ class Pi0(_model.BaseModel):
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
 
-        self.prompt_length = jnp.sum(obs.tokenized_prompt_mask, axis=-1)[0].astype(int)
+        #self.prompt_length = jnp.sum(obs.tokenized_prompt_mask, axis=-1)[0].astype(int)
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -316,9 +315,10 @@ class Pi0(_model.BaseModel):
         cache = kv_cache
 
         prefix_len = jnp.sum(prefix_mask, axis=-1).astype(int)
+        prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
 
         all_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
-        first_token_logits = all_logits[-200+self.prompt_length:-200+self.prompt_length+1, :] # will change this
+        first_token_logits = all_logits[-200+prompt_length:-200+prompt_length+1, :] # will change this
         last_token = jnp.argmax(first_token_logits, axis=-1)
 
         token_history = jnp.zeros((batch_size, max_text_len), dtype=jnp.int32)
@@ -354,6 +354,8 @@ class Pi0(_model.BaseModel):
             tokenizer = PaligemmaTokenizer(max_len=200)
             tokens_list = next_token.tolist()
             decoded_text = tokenizer._tokenizer.decode(tokens_list)
+            
+            # we print tokens one-by-one since it takes so long
             print(f"{decoded_text}", end="", flush=True)
 
             return (step + 1, next_token, new_cache, new_history)
