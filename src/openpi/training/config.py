@@ -457,7 +457,6 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 class LeRobotXarmDataConfig(DataConfigFactory):
     """
     Example data config for custom Xarm dataset in LeRobot format.
-    To convert your custom Xarm dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
     """
 
     @override
@@ -986,7 +985,7 @@ _CONFIGS = [
         name="pi05_xarm_finetune",
         model=pi0_config.Pi0Config(
             pi05=True,
-            action_dim=32,  # xarm has 7 action dimesnions
+            action_dim=32,
             action_horizon=30,
             paligemma_variant="gemma_2b_lora", 
             action_expert_variant="gemma_300m_lora"

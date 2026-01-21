@@ -55,6 +55,7 @@ class Policy(BasePolicy):
         self._metadata = metadata or {}
         self._is_pytorch_model = is_pytorch
         self._pytorch_device = pytorch_device
+        self._language_out = language_out
 
         if self._is_pytorch_model:
             self._model = self._model.to(pytorch_device)
@@ -91,15 +92,16 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
-        if language_out:
+        if self._language_out:
             text, kv_cache = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         else:
-            text = 1
+            kv_cache = None
+            #text = "1"
         actions = self._sample_actions(sample_rng_or_pytorch_device, observation, kv_cache=kv_cache, **sample_kwargs)
         outputs = {
             "state": inputs["state"],
             "actions": actions,
-            "text_tokens": text,
+            #"text_tokens": text,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:

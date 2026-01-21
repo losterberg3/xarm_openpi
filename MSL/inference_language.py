@@ -9,7 +9,7 @@ from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_test/2999")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_test/29999")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=True)
@@ -24,7 +24,7 @@ if len(devices) < 2:
 
 serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
 print("Found cameras:", serials)
-
+# Found cameras: ['317222072257', '244222071219'], if this ever changes, then we have a problem
 # check serials for which camera is which, second one is currently the external viewer
 pipelines = []
 configs = []
