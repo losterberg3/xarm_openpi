@@ -1,0 +1,40 @@
+Enter prompt for this observation: describe what you see
+Running inference
+ armIn the image, I can see a pair of scissors. The scissors are positioned on the right side of the image, with the handle pointing towards the left side.
+
+Enter prompt for this observation: what can you do with the objects in front of you
+Running inference
+ armYes, the objects in front of the left arm can be used to work on the object. The yellow pen is likely used for writing or drawing, while the blue pen is used for writing or drawing.
+
+pot of beans in frame:
+Running inference
+The image shows a black cylindrical object with a black handle. The handle appears to be positioned in the upper left corner of the image. The black cylindrical object is positioned vertically, with its handle pointing
+
+now rotating the camera to face forward:
+Enter prompt for this observation: describe what you see
+Running inference
+The image shows a black cylindrical object with a black handle. The handle appears to
+
+now put yellow bottle in there so it looks like training environment:
+Enter prompt for this observation: describe the environment
+Running inference
+Yes, and then pick up yellow cup㊄ѩ䊐⠎ḂḂѩ🫃堟🫃⠎ .....
+
+now with green T:
+Enter prompt for this observation: describe the image
+Running inference
+Yes, move the top drawerno the top drawerSubtask: pick up the blue penⓍᎱ늠邽數䊐ѩ
+
+now with book:
+Enter prompt for this observation: what does the book say
+Running inference
+Yes, the book is white舠立嚭໑Ὠ⾄Ὠ彞Ὠ⾄Ὠ彞緇Ȣ緇厹臙ṗ᷆≐狨㉗ቼ🫃
+
+
+Task: Grab the yellow bottle and place it on the pink marker, State: 124 165 100 151 139 134 2;
+Action: 
+
+[2, 7071, 235292, 45483, 573, 8123, 12989, 578, 2040, 665, 611, 573, 9010, 24416, 235269, 3040, 235292, 
+235248, 235274, 235284, 235310, 235248, 235274, 235318, 235308, 235248, 235274, 235276, 235276, 235248, 
+235274, 235308, 235274, 235248, 235274, 235304, 235315, 235248, 235274, 235304, 235310, 235248, 235284, 
+235289, 108, 4022, 235292, 235248]

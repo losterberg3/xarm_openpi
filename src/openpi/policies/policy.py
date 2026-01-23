@@ -92,8 +92,10 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
+        
         if self._language_out:
             text, kv_cache = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            #kv_cache = None
         else:
             kv_cache = None
             #text = "1"
@@ -113,6 +115,7 @@ class Policy(BasePolicy):
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }
+        print(model_time * 1000)
         return outputs
 
     @property

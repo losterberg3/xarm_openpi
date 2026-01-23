@@ -9,8 +9,8 @@ from pathlib import Path
 # ------------------------
 # Config
 # ------------------------
-REPO_NAME = "lars/xarm_demos"
-FPS = 10
+REPO_NAME = "lars/xarm_demos_absolute_pos_8hz"
+FPS = 8.0
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
@@ -112,7 +112,7 @@ else:
 # ------------------------
 
 recording = False
-prev = None
+#prev = None
 
 try:
     while True:
@@ -120,15 +120,15 @@ try:
             START_FLAG.unlink()
             print("Starting demo")
 
-            prev_joints = arm.get_servo_angle(is_radian=True)[1][:6]
-            prev_gripper = (arm.get_gripper_position()[1] - 850) / -860
-            prev = np.array(prev_joints + [prev_gripper], dtype=np.float32)
+            #prev_joints = arm.get_servo_angle(is_radian=True)[1][:6]
+            #prev_gripper = (arm.get_gripper_position()[1] - 850) / -860
+            #prev = np.array(prev_joints + [prev_gripper], dtype=np.float32)
             recording = True
 
         if STOP_FLAG.exists() and recording:
             STOP_FLAG.unlink()
             print("Ending demo")
-            prev = None
+            #prev = None
             recording = False
             dataset.save_episode()
             print("Episode saved")
@@ -145,8 +145,7 @@ try:
         gripper = (arm.get_gripper_position()[1] - 850) / -860
 
         curr = np.array(joints + [gripper], dtype=np.float32)
-        action = curr - prev
-        prev = curr
+        action = curr #- prev
         
         wrist, base, base2 = read_cameras()
 
@@ -162,6 +161,9 @@ try:
                 "task": TASK_DESCRIPTION,
             }
         )
+
+        #prev_joints = joints
+        #prev_gripper = gripper
 
         # ---- Timing ----
         elapsed = time.perf_counter() - start

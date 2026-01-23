@@ -275,8 +275,9 @@ class Pi0(_model.BaseModel):
                 adarms_cond=[None, adarms_cond],
             )
             assert prefix_out is None
+            #print(suffix_out[:, -self.action_horizon :])
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
-
+            #print(v_t)
             return x_t + dt * v_t, time + dt
 
         def cond(carry):

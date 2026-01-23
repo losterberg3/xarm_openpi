@@ -481,6 +481,13 @@ class LeRobotXarmDataConfig(DataConfigFactory):
             inputs=[xarm_policy.XarmInputs(model_type=model_config.model_type)],
             outputs=[xarm_policy.XarmOutputs()],
         )
+        
+        delta_action_mask = _transforms.make_bool_mask(6, -1)
+        data_transforms = data_transforms.push(
+            inputs=[_transforms.DeltaActions(delta_action_mask)],
+            outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+        )
+        
         model_transforms = ModelTransformFactory()(model_config)
 
         return dataclasses.replace(
@@ -674,16 +681,17 @@ _CONFIGS = [
     #
     TrainConfig(
         name="pi05_xarm",
-        model=pi0_config.Pi0Config(action_horizon=30, pi05=True),
-        data=SimpleDataConfig(
+        model=pi0_config.Pi0Config(action_horizon=50, pi05=True),
+        data=LeRobotXarmDataConfig(
+            # Replace with your custom Xarm LeRobot dataset repo id.
+            repo_id="lars/xarm_demos_absolute_pos_8hz",  # just for training, locating the dataset
+            base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
-                #assets_dir="/home/larsosterberg/MSL/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                asset_id="lars/xarm_demos",
-            ), # change this once you have norm stats
-            data_transforms=lambda model: _transforms.Group(
-                inputs=[xarm_policy.XarmInputs(model_type=ModelType.PI05)],
-                outputs=[xarm_policy.XarmOutputs()],
-            )
+                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
+                # Then possibly use those norm stats and change below
+                assets_dir="/home/larsosterberg/MSL/openpi/assets/pi05_xarm_finetune", # this might not be necessary
+                asset_id="lars/xarm_demos_absolute_pos_8hz", # for norm stats (inference and training)
+            ),
         ),
     ),
     TrainConfig(
@@ -986,38 +994,38 @@ _CONFIGS = [
         model=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,
-            action_horizon=30,
+            action_horizon=50,
             paligemma_variant="gemma_2b_lora", 
             action_expert_variant="gemma_300m_lora"
         ),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            repo_id="lars/xarm_demos",  # change this
+            repo_id="lars/xarm_demos_absolute_pos_8hz",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
                 assets_dir="/home/larsosterberg/MSL/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                #asset_id="xarm_demos",
+                asset_id="lars/xarm_demos_absolute_pos_8hz",
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
-            action_dim=32,  # xarm has 7 action dimesnions
-            action_horizon=30,
+            action_dim=32,
+            action_horizon=50,
             paligemma_variant="gemma_2b_lora", 
             action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
         ema_decay=None,
-        num_train_steps=30_000,
+        num_train_steps=25_000,
         save_interval=2_000,
         overwrite=True, #keep track of this for storage issues
         batch_size=16,
         wandb_enabled=True,
     ),
     # then to run training ->
-    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_test --overwrite
+    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_abs_pos --overwrite
 
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.

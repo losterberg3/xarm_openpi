@@ -9,9 +9,9 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-DT = 0.1 # your timestep, do not change
-CONTROL_HZ = 60.0 # keep as a multiple of 10
-ACTION_HORIZON = 30
+DT = 1.0 # your timestep
+CONTROL_HZ = 40.0 # keep as a multiple of 10
+ACTION_ROLLOUT = 30 
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
@@ -25,7 +25,7 @@ arm.set_gripper_mode(0)
 
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_test/29999")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
@@ -78,43 +78,45 @@ def get_observation():
     }
     return observation
 
-def interpolate_action(state, delta):
-    delta_increment = delta / (DT * CONTROL_HZ)
+def interpolate_action(state, goal):
+    delta_increment = (goal - state) / (DT * CONTROL_HZ)
 
     for i in range(int(DT * CONTROL_HZ)):
         start = time.perf_counter()
         state = state + delta_increment
-        set_servo_angle_j(state, is_radian=True, wait=False)
+        arm.set_servo_angle_j(state, is_radian=True, wait=True)
         time_left = (1 / CONTROL_HZ) - (time.perf_counter() - start)
         time.sleep(max(time_left,0))
-        
-
+       
 while True:
 
     observation = get_observation()
 
     print("Running inference")
     inference = policy.infer(observation)
-
+    
     action = np.array(inference["actions"])
     
     count = 0
-    while count < ACTION_HORIZON:
+
+    init_joints = observation["observation/joint_position"]
+    init_gripper = observation["observation/gripper_position"]
+    print(init_joints)
+    while count < ACTION_ROLLOUT:
         t0 = time.perf_counter()
-
-        # get the current state
         code, angles = arm.get_servo_angle(is_radian=True)
-        code, g_p = arm.get_gripper_position()
         state = np.array(angles)
-        g_p = np.array((g_p - 850) / -860)
-
+        
         # get the target angles
-        delta = np.array(action[count,:6])
-        interpolate_action(state[:6], delta)
-
-        cmd_gripper_pose = (g_p + action[count,6]) * -860 + 850 # unnormalize the gripper action
+        cmd_joint_pose = np.array(action[count,:6])
+        
+        # execute smooth motion to target via interpolation
+        interpolate_action(state[:6], cmd_joint_pose)
+        
+        cmd_gripper_pose = (action[count,6]) * -860 + 850 # unnormalize the gripper action
+        
         #arm.set_servo_angle(servo_id=8, angle=cmd_joint_pose, is_radian=True) 
-        arm.set_gripper_position(cmd_gripper_pose)
+        #arm.set_gripper_position(cmd_gripper_pose)
 
         count += 1
         time_left = DT - (time.perf_counter() - t0)
