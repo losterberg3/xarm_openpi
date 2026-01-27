@@ -63,8 +63,12 @@ class Policy(BasePolicy):
             self._sample_actions = model.sample_actions
         else:
             # JAX model setup
-            self._sample_actions = nnx_utils.module_jit(model.sample_actions)
-            self._sample_text = model.sample_text
+            #self._sample_actions = nnx_utils.module_jit(model.sample_actions)
+            # consider trying to convert to JIT here
+            #self._sample_text = model.sample_text
+            #self._sample_text_jit = nnx_utils.module_jit(model.sample_text_jit)
+            self._ar_loops = nnx_utils.module_jit(model.ar_loops)
+            self._sample_text_jit = nnx_utils.module_jit(model.sample_text_jit)
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -93,17 +97,19 @@ class Policy(BasePolicy):
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
         
+        prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)
+
         if self._language_out:
-            text, kv_cache = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
-            #kv_cache = None
+            text_tokens = self._sample_text_jit(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            actions = np.zeros((10, 10, 10))
         else:
-            kv_cache = None
-            #text = "1"
-        actions = self._sample_actions(sample_rng_or_pytorch_device, observation, kv_cache=kv_cache, **sample_kwargs)
+            text_tokens = None
+        
+        #actions = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         outputs = {
             "state": inputs["state"],
             "actions": actions,
-            #"text_tokens": text,
+            "text_tokens": text_tokens,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:
@@ -115,7 +121,6 @@ class Policy(BasePolicy):
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }
-        print(model_time * 1000)
         return outputs
 
     @property

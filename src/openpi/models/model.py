@@ -99,6 +99,9 @@ class Observation(Generic[ArrayT]):
     # Tokenized prompt mask.
     tokenized_prompt_mask: at.Bool[ArrayT, "*b l"] | None = None
 
+    tokenized_history: at.Int[ArrayT, "b h"] | None = None
+    tokenized_history_mask: at.Bool[ArrayT, "b h"] | None = None
+
     # pi0-fast model specific fields.
 
     # Token auto-regressive mask (for FAST autoregressive model).

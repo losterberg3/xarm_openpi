@@ -39,6 +39,7 @@ def make_attn_mask(input_mask, mask_ar):
       mask_ar: bool[?B, N] mask that's true where previous tokens cannot depend on
         it and false where it shares the same attention mask as the previous token.
     """
+    
     mask_ar = jnp.broadcast_to(mask_ar, input_mask.shape)
     cumsum = jnp.cumsum(mask_ar, axis=1)
     attn_mask = cumsum[:, None, :] <= cumsum[:, :, None]
@@ -126,7 +127,13 @@ class Pi0(_model.BaseModel):
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
 
-        #self.prompt_length = jnp.sum(obs.tokenized_prompt_mask, axis=-1)[0].astype(int)
+        # add history tokens (if present)
+        if hasattr(obs, 'tokenized_history') and obs.tokenized_history is not None:
+            history_tokens = self.PaliGemma.llm(obs.tokenized_history, method="embed")
+            tokens.append(history_tokens)
+            input_mask.append(obs.tokenized_history_mask)
+            # full attention for history tokens
+            ar_mask += [False] * history_tokens.shape[1]
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -225,19 +232,17 @@ class Pi0(_model.BaseModel):
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
-        kv_cache: Any | None = None
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
         
         # first fill KV cache with a forward pass of the prefix
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
 
-        # if kv_cache hasn't been precomputed in sample_text
-        if kv_cache is None:
-            _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
+        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
     
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
@@ -295,8 +300,8 @@ class Pi0(_model.BaseModel):
         observation: _model.Observation,
         text_history: at.Int[at.Array, "b t"] | None = None, 
         *,
-        max_text_len: int = 50,
-    ) -> tuple[_model.Text, Any]:  
+        max_text_len: int = 5,
+    ) -> _model.Text:  
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
         
@@ -310,16 +315,14 @@ class Pi0(_model.BaseModel):
             mask=prefix_attn_mask, 
             positions=positions
         )
-        
-        # not sure if it does pass by reference or not
-        initial_kv_cache = kv_cache        
+             
         cache = kv_cache
 
         prefix_len = jnp.sum(prefix_mask, axis=-1).astype(int)
         prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
 
         all_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
-        first_token_logits = all_logits[-200+prompt_length:-200+prompt_length+1, :] # will change this
+        first_token_logits = all_logits[-200+prompt_length-1:-200+prompt_length, :] # will change this
         last_token = jnp.argmax(first_token_logits, axis=-1)
 
         token_history = jnp.zeros((batch_size, max_text_len), dtype=jnp.int32)
@@ -336,6 +339,7 @@ class Pi0(_model.BaseModel):
             embedded_token = self.PaliGemma.llm(token_input, method="embed")
             generated_mask = jnp.ones((batch_size, step), dtype=jnp.bool_)
             full_mask = jnp.concatenate([prefix_mask, generated_mask], axis=1)
+            #print(full_mask.shape)
             
             # Reshape for attention: (batch, 1, cache_len + step)
             mask = full_mask[:, None, :]
@@ -368,4 +372,199 @@ class Pi0(_model.BaseModel):
             )
 
         # we return kv_cache from first pass so it can be used by sample actions
-        return token_history, initial_kv_cache
+        return token_history
+
+    """
+    @override
+    def sample_text_jit(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        text_history: at.Int[at.Array, "b t"] | None = None, 
+        *,
+        max_text_len: int = 50,
+    ) -> _model.Text:  
+        observation = _model.preprocess_observation(None, observation, train=False)
+        batch_size = observation.state.shape[0]
+        
+        # First fill KV cache with a forward pass of the prefix
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+        positions = jnp.cumsum(prefix_mask, axis=1) - 1
+        
+        (prefix_out, _), kv_cache = self.PaliGemma.llm(
+            [prefix_tokens, None], 
+            mask=prefix_attn_mask, 
+            positions=positions
+        )
+        print(kv_cache)       
+
+        prefix_len = jnp.sum(prefix_mask, axis=-1).astype(int)
+        prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
+        
+        start_idx = -200 + prompt_length - 1
+        hidden_dim = prefix_out[0].shape[-1]
+        
+        first_token_hidden = jax.lax.dynamic_slice(
+            prefix_out[0],
+            (start_idx, 0),
+            (1, hidden_dim)
+        )
+
+        first_token_logits = self.PaliGemma.llm(
+            first_token_hidden, 
+            method="decode_to_logits"
+        )
+        values, last_token = jax.lax.top_k(first_token_logits, k=5)
+        
+        token_history = jnp.zeros((batch_size, max_text_len), dtype=jnp.int32)
+        last_token = last_token[:,0]
+        token_history = token_history.at[:, 0].set(last_token)
+
+        # JIT-compatible loop
+        def loop_body(i, carry):
+            last_token, cache, history, prefix_mask = carry
+            step = i + 1
+            # Pre-calculate maximum possible cache length
+            max_cache_len = prefix_mask.shape[1] + max_text_len
+            
+            # Current actual cache length
+            current_cache_len = prefix_mask.shape[1] + step
+            
+            # Update prefix_mask
+            update_idx = -200 + prompt_length + step - 1
+            prefix_mask = jax.lax.dynamic_update_slice(prefix_mask, jnp.array([[True]]), (0, update_idx))
+            
+            positions = jnp.array([jnp.sum(prefix_mask, axis=1) - 1])
+            
+            token_input = last_token[:, None]
+            embedded_token = self.PaliGemma.llm(token_input, method="embed")
+            
+            # Create STATIC-sized mask but with dynamic valid positions
+            mask_positions = jnp.arange(max_cache_len)
+            valid_positions = mask_positions < current_cache_len  # Dynamic comparison, static shape
+            full_mask = valid_positions[None, None, :].astype(jnp.bool_)
+
+            mask = jax.lax.dynamic_slice(
+                full_mask,
+                (0, 0, 0),  # Start indices
+                (1, 1, current_cache_len)  # Slice size (dynamic but that's OK for dynamic_slice)
+            )
+
+            (out, _), new_cache = self.PaliGemma.llm(
+                [embedded_token, None], 
+                mask = mask,
+                positions=positions,
+                kv_cache=cache
+            )
+            logits = self.PaliGemma.llm(out[0], method="decode_to_logits")
+            values, next_tokens = jax.lax.top_k(logits[0], k=5)
+            
+            new_history = jax.lax.dynamic_update_slice(history, next_tokens[0], (0, step))
+            
+            return (next_tokens[0], new_cache, new_history, prefix_mask)
+        
+        # Run loop
+        init_carry = (last_token, kv_cache, token_history, prefix_mask)
+        final_token, final_cache, final_history, final_mask = jax.lax.fori_loop(
+            0, 
+            max_text_len - 1, 
+            loop_body, 
+            init_carry
+        )
+
+        return final_history
+    """
+    
+
+    @override
+    def sample_text_jit(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        text_history: at.Int[at.Array, "b t"] | None = None,
+        *,
+        max_text_len: int = 50,
+    ) -> _model.Text:  
+        observation = _model.preprocess_observation(None, observation, train=False)
+        batch_size = observation.state.shape[0]
+        
+        # first fill KV cache with a forward pass of the prefix
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+        positions = jnp.cumsum(prefix_mask, axis=1) - 1
+        
+        (prefix_out, _), kv_cache = self.PaliGemma.llm(
+            [prefix_tokens, None], 
+            mask=prefix_attn_mask, 
+            positions=positions
+        )
+        
+        prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
+
+        start_idx = -200 + prompt_length - 1
+        hidden_dim = prefix_out[0].shape[-1]
+        
+        hidden_state = jax.lax.dynamic_slice(
+            prefix_out[0],
+            (start_idx, 0),
+            (1, hidden_dim)
+        )
+        token_logits = self.PaliGemma.llm(hidden_state, method="decode_to_logits")
+        # will change later, just want jit to work
+        #values, next_tokens = jax.lax.top_k(token_logits, k=1)
+
+        temperature = 0.7
+        rng, sample_rng = jax.random.split(rng)
+        next_token = jax.random.categorical(sample_rng, token_logits / temperature)
+    
+        return next_token
+
+    @override
+    def ar_loops(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        text_history: at.Int[at.Array, "b t"] | None = None,
+        *,
+        max_text_len: int = 50,
+        kv_cache: Any | None = None,
+    ) -> _model.Text:  
+        observation = _model.preprocess_observation(None, observation, train=False)
+        batch_size = observation.state.shape[0]
+        prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
+        start_idx = -200 + prompt_length - 1
+
+        # first fill KV cache with a forward pass of the prefix
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        #prefix_ar_mask = jax.lax.dynamic_update_slice(prefix_ar_mask, jnp.array([True]), (update_idx,))
+        
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+        positions = jnp.array([jnp.sum(prefix_mask, axis=1) - 1])
+        #positions = jnp.cumsum(prefix_mask, axis=1) - 1
+
+        hidden_dim = prefix_tokens.shape[-1]
+        token = jax.lax.dynamic_slice(
+            prefix_tokens,
+            (0, start_idx, 0),
+            (1, 1, hidden_dim)
+        )
+        
+        (prefix_out, _), kv_cache = self.PaliGemma.llm(
+            [token, None], 
+            mask=prefix_mask[:, None, :], 
+            positions=positions
+        )
+        
+        hidden_dim = prefix_out[0].shape[-1]
+        hidden_state = jax.lax.dynamic_slice(
+            prefix_out[0],
+            (start_idx, 0),
+            (1, hidden_dim)
+        )
+        token_logits = self.PaliGemma.llm(hidden_state, method="decode_to_logits")
+        # will change later, just want jit to work
+        predicted_token = jnp.argmax(token_logits, axis=-1)
+    
+        return predicted_token
+    
