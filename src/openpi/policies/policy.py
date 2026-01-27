@@ -34,6 +34,7 @@ class Policy(BasePolicy):
         pytorch_device: str = "cpu",
         is_pytorch: bool = False,
         language_out: bool = False,
+        jitted_language: bool = False,
     ):
         """Initialize the Policy.
 
@@ -56,6 +57,7 @@ class Policy(BasePolicy):
         self._is_pytorch_model = is_pytorch
         self._pytorch_device = pytorch_device
         self._language_out = language_out
+        self._jitted_language = jitted_language
 
         if self._is_pytorch_model:
             self._model = self._model.to(pytorch_device)
@@ -63,12 +65,12 @@ class Policy(BasePolicy):
             self._sample_actions = model.sample_actions
         else:
             # JAX model setup
-            #self._sample_actions = nnx_utils.module_jit(model.sample_actions)
-            # consider trying to convert to JIT here
-            #self._sample_text = model.sample_text
-            #self._sample_text_jit = nnx_utils.module_jit(model.sample_text_jit)
-            self._ar_loops = nnx_utils.module_jit(model.ar_loops)
-            self._sample_text_jit = nnx_utils.module_jit(model.sample_text_jit)
+            if self._language_out:
+                self._sample_text = model.sample_text
+                # Jitted text sampling
+                self._sample_text_jit = nnx_utils.module_jit(model.sample_text_jit)
+            else:
+                self._sample_actions = nnx_utils.module_jit(model.sample_actions)
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -100,7 +102,10 @@ class Policy(BasePolicy):
         prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)
 
         if self._language_out:
-            text_tokens = self._sample_text_jit(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            if self._jitted_language:
+                text_tokens = self._sample_text_jit(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            else:
+                text_tokens = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
             actions = np.zeros((10, 10, 10))
         else:
             text_tokens = None

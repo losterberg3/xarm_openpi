@@ -8,16 +8,23 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-#config = _config.get_config("pi05_xarm")
-#checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
 
-config = _config.get_config("pi05_base")
-checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
+base = False
+jit = False
+output_len = 100
+
+if base:
+    config = _config.get_config("pi05_base")
+    checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
+else:
+    config = _config.get_config("pi05_xarm")
+    checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
+
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=True)
+policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=True, jitted_language=jit)
 # make sure to edit tokenizer.py if you want language to only include the prompt
 
-tokenizer = PaligemmaTokenizer(max_len=40)
+tokenizer = PaligemmaTokenizer(max_len=output_len)
 
 # Connect to cameras
 ctx = rs.context()
@@ -76,40 +83,36 @@ def get_observation():
     }
     return observation
 
-while True:
-    try:
-        observation = get_observation()
+# query the policy
+if jit:
+    while True:
+        try:
+            observation = get_observation()
 
-        print("Running inference")
-        for i in range(100):
+            print("Running inference")
+            for i in range(output_len):
+                inference = policy.infer(observation)
+                token_list = inference["text_tokens"].tolist()
+                if token_list[0] == 1:
+                    decoded_text = " And,"
+                else:
+                    decoded_text = tokenizer._tokenizer.decode(token_list)
+                
+                print(f"{decoded_text}", end="", flush=True)
+                observation["prompt"] = observation["prompt"] + decoded_text
+
+        except KeyboardInterrupt:
+            print("\nInference interrupted, continuing loop...")
+            continue         
+else:        
+    while True:
+        try:
+            observation = get_observation()
+            print("Running inference")
+            
+            # Generate all tokens at once
             inference = policy.infer(observation)
-            token_list = inference["text_tokens"].tolist()
             
-            # Check for EOS token and break
-            if token_list == 1:  # Assuming token_list is a list with one element
-                print()  # New line after generation
-                break
-            
-            decoded_text = tokenizer._tokenizer.decode(token_list)
-            print(f"{decoded_text}", end="", flush=True)
-            observation["prompt"] = observation["prompt"] + decoded_text
-
-    except KeyboardInterrupt:
-        print("\nInference interrupted, continuing loop...")
-        continue
-        
-"""
-
-while True:
-    try:
-        observation = get_observation()
-        print("Running inference")
-        
-        # Generate all tokens at once
-        inference = policy.infer(observation)
-        
-    except KeyboardInterrupt:
-        print("\nInference interrupted, continuing loop...")
-        continue
-
-"""
+        except KeyboardInterrupt:
+            print("\nInference interrupted, continuing loop...")
+            continue
