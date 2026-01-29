@@ -126,7 +126,7 @@ class Pi0(_model.BaseModel):
             )
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
-
+        
         # add history tokens (if present)
         if hasattr(obs, 'tokenized_history') and obs.tokenized_history is not None:
             history_tokens = self.PaliGemma.llm(obs.tokenized_history, method="embed")
@@ -134,6 +134,7 @@ class Pi0(_model.BaseModel):
             input_mask.append(obs.tokenized_history_mask)
             # full attention for history tokens
             ar_mask += [False] * history_tokens.shape[1]
+        
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -145,6 +146,7 @@ class Pi0(_model.BaseModel):
         tokens = jnp.concatenate(tokens, axis=1)
         input_mask = jnp.concatenate(input_mask, axis=1)
         ar_mask = jnp.array(ar_mask)
+        print(ar_mask.shape)
         return tokens, input_mask, ar_mask
 
     @at.typecheck
@@ -232,7 +234,7 @@ class Pi0(_model.BaseModel):
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
-    ) -> _model.Actions:
+    ) -> tuple[_model.Actions, Any]:
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
         
@@ -249,7 +251,7 @@ class Pi0(_model.BaseModel):
         dt = -1.0 / num_steps
         if noise is None:
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
-            
+        
         def step(carry):
             x_t, time = carry
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
@@ -290,7 +292,7 @@ class Pi0(_model.BaseModel):
             # robust to floating-point error
             return time >= -dt / 2
 
-        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+        x_0, _, action = jax.lax.while_loop(cond, step, (noise, 1.0))
         return x_0
 
     @override
@@ -310,6 +312,8 @@ class Pi0(_model.BaseModel):
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
         
+        print(prefix_tokens.shape)
+
         (prefix_out, _), kv_cache = self.PaliGemma.llm(
             [prefix_tokens, None], 
             mask=prefix_attn_mask, 
@@ -321,17 +325,8 @@ class Pi0(_model.BaseModel):
 
         all_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
         first_token_logits = all_logits[-200+prompt_length-1:-200+prompt_length, :] # will change this
-        
-        tokens = jnp.argmax(all_logits, axis=-1)
-        values, tokens = jax.lax.top_k(all_logits, k=1)
-        tokenizer = PaligemmaTokenizer(max_len=200)
-        for i in tokens:
-            tokens_list = i.tolist()
-            decoded_text = tokenizer._tokenizer.decode(tokens_list)
-            print(f"{decoded_text}", end="", flush=True)
 
-        return tokens
-        
+
         last_token = jnp.argmax(first_token_logits, axis=-1)
 
         token_history = jnp.zeros((batch_size, max_text_len), dtype=jnp.int32)
@@ -359,6 +354,7 @@ class Pi0(_model.BaseModel):
                 kv_cache=cache
             )
             logits = self.PaliGemma.llm(out[0], method="decode_to_logits")
+            
             next_token = jnp.argmax(logits[0], axis=-1)
             
             # Update history
@@ -374,7 +370,7 @@ class Pi0(_model.BaseModel):
             return (step + 1, next_token, new_cache, new_history)
 
         # can't use a jax loop with dynamic mask arrays
-        while step < max_text_len or last_token!=1:
+        while step < max_text_len:
             step, last_token, cache, token_history = text_step(
                 (step, last_token, kv_cache, token_history)
             )
@@ -408,10 +404,10 @@ class Pi0(_model.BaseModel):
 
         token_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
         
-        max5 = False
+        maxk = True
         temp = False
-        if max5:
-            values, tokens = jax.lax.top_k(token_logits, k=5)
+        if maxk:
+            values, tokens = jax.lax.top_k(token_logits, k=30)
         elif temp:
             temperature = 0.7
             rng, sample_rng = jax.random.split(rng)

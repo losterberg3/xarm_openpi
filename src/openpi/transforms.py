@@ -262,8 +262,26 @@ class TokenizePrompt(DataTransformFn):
         if not isinstance(prompt, str):
             prompt = prompt.item()
 
+        history_tokens = None
+        history_mask = None
+
+        if "history" in data:
+            history = data.pop("history")
+            if history is not None:
+                history_str = self._serialize_history(history)
+                history_tokens, history_mask = self.tokenizer.tokenize_history(history_str)
+        else:
+            tokenizer = _tokenizer.PaligemmaTokenizer(max_len = 200, max_history_len = 0)
+        
         tokens, token_masks = self.tokenizer.tokenize(prompt, state)
-        return {**data, "tokenized_prompt": tokens, "tokenized_prompt_mask": token_masks}
+    
+        return {
+            **data, 
+            "tokenized_prompt": tokens, 
+            "tokenized_prompt_mask": token_masks,
+            "tokenized_history": history_tokens,
+            "tokenized_history_mask": history_mask
+        }
 
 
 @dataclasses.dataclass(frozen=True)

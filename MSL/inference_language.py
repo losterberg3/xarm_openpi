@@ -9,9 +9,9 @@ from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
 
-base = False
+base = True
 jit = False
-output_len = 100
+output_len = 200
 
 if base:
     config = _config.get_config("pi05_base")
@@ -90,16 +90,13 @@ if jit:
             observation = get_observation()
 
             print("Running inference")
-            for i in range(output_len):
-                inference = policy.infer(observation)
-                token_list = inference["text_tokens"].tolist()
-                if token_list[0] == 1:
-                    decoded_text = " And,"
-                else:
-                    decoded_text = tokenizer._tokenizer.decode(token_list)
-                
-                print(f"{decoded_text}", end="", flush=True)
-                observation["prompt"] = observation["prompt"] + decoded_text
+            inference = policy.infer(observation)
+            
+            token_list = inference["text_tokens"].tolist()
+            for item in token_list:
+                decoded_text = tokenizer._tokenizer.decode(item)
+                print(f"{decoded_text}", end=" ", flush=True)
+            
 
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
@@ -116,3 +113,26 @@ else:
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
             continue
+
+
+"""
+while True:
+        try:
+            observation = get_observation()
+
+            print("Running inference")
+            for i in range(output_len):
+                inference = policy.infer(observation)
+                token_list = inference["text_tokens"].tolist()
+                if token_list[0] == 1:
+                    decoded_text = " And,"
+                else:
+                    decoded_text = tokenizer._tokenizer.decode(token_list)
+                
+                print(f"{decoded_text}", end="", flush=True)
+                observation["prompt"] = observation["prompt"] + decoded_text
+
+        except KeyboardInterrupt:
+            print("\nInference interrupted, continuing loop...")
+            continue
+"""

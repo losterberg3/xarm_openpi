@@ -98,7 +98,7 @@ class Observation(Generic[ArrayT]):
     tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
     # Tokenized prompt mask.
     tokenized_prompt_mask: at.Bool[ArrayT, "*b l"] | None = None
-
+    # tokenized history
     tokenized_history: at.Int[ArrayT, "b h"] | None = None
     tokenized_history_mask: at.Bool[ArrayT, "b h"] | None = None
 
@@ -129,6 +129,8 @@ class Observation(Generic[ArrayT]):
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
+            tokenized_history=data.get("tokenized_history"),
+            tokenized_history_mask=data.get("tokenized_history_mask"),
         )
 
     def to_dict(self) -> at.PyTree[ArrayT]:

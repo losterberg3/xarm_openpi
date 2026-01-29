@@ -12,12 +12,32 @@ import openpi.shared.download as download
 
 
 class PaligemmaTokenizer:
-    def __init__(self, max_len: int = 48):
-        self._max_len = max_len
+    def __init__(self, max_len: int = 48, max_history_len: int = 48):
+        self._max_len = max_len - max_history_len # we don't want to grow past 200 total
+        self._max_history_len = max_history_len
 
         path = download.maybe_download("gs://big_vision/paligemma_tokenizer.model", gs={"token": "anon"})
         with path.open("rb") as f:
             self._tokenizer = sentencepiece.SentencePieceProcessor(model_proto=f.read())
+    
+    def tokenize_history(self, history: str) -> tuple[np.ndarray, np.ndarray]:
+        if history is None or len(history.strip()) == 0:
+            tokens = np.zeros(self._max_history_len, dtype=np.int32)
+            mask = np.zeros(self._max_history_len, dtype=bool)
+            return tokens, mask
+
+        cleaned_text = (history.strip().replace("_", " ").replace("\n", " ").lower())
+
+        tokens = self._tokenizer.encode(cleaned_text, add_bos=False)
+
+        if len(tokens) < self._max_history_len:
+            mask = [True] * len(tokens) + [False] * (self._max_history_len - len(tokens))
+            tokens = tokens + [0] * (self._max_history_len - len(tokens))
+        else:
+            tokens = tokens[: self._max_history_len]
+            mask = [True] * self._max_history_len
+
+        return np.asarray(tokens), np.asarray(mask)
 
     def tokenize(self, prompt: str, state: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
@@ -46,6 +66,7 @@ class PaligemmaTokenizer:
                 )
             tokens = tokens[: self._max_len]
             mask = [True] * self._max_len
+
 
         return np.asarray(tokens), np.asarray(mask)
 

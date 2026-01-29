@@ -98,8 +98,6 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
-        
-        prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)
 
         if self._language_out:
             if self._jitted_language:
@@ -109,8 +107,8 @@ class Policy(BasePolicy):
             actions = np.zeros((10, 10, 10))
         else:
             text_tokens = None
+            actions = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         
-        #actions = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         outputs = {
             "state": inputs["state"],
             "actions": actions,
