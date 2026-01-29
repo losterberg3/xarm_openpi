@@ -297,8 +297,9 @@ class Pi0(_model.BaseModel):
     def sample_text(
         self,
         rng: at.KeyArrayLike,
-        observation: _model.Observation,
-        text_history: at.Int[at.Array, "b t"] | None = None, 
+        observation: _model.Observation, 
+        *,
+        history_len: int = 20,
     ) -> _model.Text:  
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
@@ -322,7 +323,6 @@ class Pi0(_model.BaseModel):
 
         last_token = jnp.argmax(first_token_logits, axis=-1)
 
-        history_len = 20
         token_history = jnp.zeros((batch_size, history_len), dtype=jnp.int32)
         token_history = token_history.at[:, 0].set(last_token)
     
@@ -363,7 +363,7 @@ class Pi0(_model.BaseModel):
             return (step + 1, next_token, new_cache, new_history)
 
         # can't use a jax loop with dynamic mask arrays
-        while step < 20:
+        while step < history_len:
             step, last_token, cache, token_history = text_step(
                 (step, last_token, cache, token_history)
             )
@@ -376,7 +376,6 @@ class Pi0(_model.BaseModel):
         self,
         rng: at.KeyArrayLike,
         observation: _model.Observation,
-        text_history: at.Int[at.Array, "b t"] | None = None,
     ) -> _model.Text:  
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
@@ -397,7 +396,7 @@ class Pi0(_model.BaseModel):
 
         token_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
         
-        maxk = True
+        maxk = False
         temp = False
         if maxk:
             values, tokens = jax.lax.top_k(token_logits, k=30)
