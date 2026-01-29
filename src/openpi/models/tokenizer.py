@@ -12,34 +12,34 @@ import openpi.shared.download as download
 
 
 class PaligemmaTokenizer:
-    def __init__(self, max_len: int = 48, max_history_len: int = 48):
-        self._max_len = max_len - max_history_len # we don't want to grow past 200 total
-        self._max_history_len = max_history_len
+    def __init__(self, max_len: int = 48):
+        self._max_len = max_len
+        self._history_len = 20
 
         path = download.maybe_download("gs://big_vision/paligemma_tokenizer.model", gs={"token": "anon"})
         with path.open("rb") as f:
             self._tokenizer = sentencepiece.SentencePieceProcessor(model_proto=f.read())
-    
-    def tokenize_history(self, history: str) -> tuple[np.ndarray, np.ndarray]:
+
+    def tokenize(
+        self, 
+        prompt: str, 
+        state: np.ndarray | None = None, 
+        history: str | None = None
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         if history is None or len(history.strip()) == 0:
-            tokens = np.zeros(self._max_history_len, dtype=np.int32)
-            mask = np.zeros(self._max_history_len, dtype=bool)
-            return tokens, mask
-
-        cleaned_text = (history.strip().replace("_", " ").replace("\n", " ").lower())
-
-        tokens = self._tokenizer.encode(cleaned_text, add_bos=False)
-
-        if len(tokens) < self._max_history_len:
-            mask = [True] * len(tokens) + [False] * (self._max_history_len - len(tokens))
-            tokens = tokens + [0] * (self._max_history_len - len(tokens))
+            history_tokens = np.zeros(self._history_len, dtype=np.int32)
+            history_mask = np.zeros(self._history_len, dtype=bool)
         else:
-            tokens = tokens[: self._max_history_len]
-            mask = [True] * self._max_history_len
+            cleaned_history = (history.strip().replace("_", " ").replace("\n", " ").lower())
+            history_tokens = self._tokenizer.encode(cleaned_history, add_bos=False)
+            
+            if len(history_tokens) < self._max_history_len:
+                history_mask = [True] * len(history_tokens) + [False] * (self._max_history_len - len(history_tokens))
+                history_tokens = history_tokens + [0] * (self._max_history_len - len(history_tokens))
+            else:
+                history_tokens = history_tokens[: self._max_history_len]
+                history_mask = [True] * self._max_history_len
 
-        return np.asarray(tokens), np.asarray(mask)
-
-    def tokenize(self, prompt: str, state: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
         if state is not None:
             # This is the Pi05 format, where the state is part of the discrete language input.
@@ -54,21 +54,20 @@ class PaligemmaTokenizer:
             # tokenize "\n" separately as the "start of answer" token
             tokens = self._tokenizer.encode(cleaned_text, add_bos=True) + self._tokenizer.encode("\n")
         tokens_len = len(tokens)
-        if tokens_len < self._max_len:
-            padding = [False] * (self._max_len - tokens_len)
+        if tokens_len < (self._max_len - self._history_len):
+            padding = [False] * (self._max_len - self._history_len - tokens_len)
             mask = [True] * tokens_len + padding
             tokens = tokens + padding
         else:
-            if len(tokens) > self._max_len:
+            if len(tokens) > (self._max_len - self._history_len):
                 logging.warning(
-                    f"Token length ({len(tokens)}) exceeds max length ({self._max_len}), truncating. "
+                    f"Token length ({len(tokens)}) exceeds max length ({self._max_len - self._history_len}), truncating. "
                     "Consider increasing the `max_token_len` in your model config if this happens frequently."
                 )
-            tokens = tokens[: self._max_len]
-            mask = [True] * self._max_len
+            tokens = tokens[: (self._max_len - self._history_len)]
+            mask = [True] * (self._max_len - self._history_len)
 
-
-        return np.asarray(tokens), np.asarray(mask)
+        return np.asarray(tokens), np.asarray(mask), np.asarray(history_tokens), np.asarray(history_mask)
 
 
 class FASTTokenizer:

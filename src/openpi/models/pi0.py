@@ -134,7 +134,6 @@ class Pi0(_model.BaseModel):
             input_mask.append(obs.tokenized_history_mask)
             # full attention for history tokens
             ar_mask += [False] * history_tokens.shape[1]
-        
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -146,7 +145,6 @@ class Pi0(_model.BaseModel):
         tokens = jnp.concatenate(tokens, axis=1)
         input_mask = jnp.concatenate(input_mask, axis=1)
         ar_mask = jnp.array(ar_mask)
-        print(ar_mask.shape)
         return tokens, input_mask, ar_mask
 
     @at.typecheck
@@ -301,8 +299,6 @@ class Pi0(_model.BaseModel):
         rng: at.KeyArrayLike,
         observation: _model.Observation,
         text_history: at.Int[at.Array, "b t"] | None = None, 
-        *,
-        max_text_len: int = 1,
     ) -> _model.Text:  
         observation = _model.preprocess_observation(None, observation, train=False)
         batch_size = observation.state.shape[0]
@@ -311,10 +307,8 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-        
-        print(prefix_tokens.shape)
 
-        (prefix_out, _), kv_cache = self.PaliGemma.llm(
+        (prefix_out, _), cache = self.PaliGemma.llm(
             [prefix_tokens, None], 
             mask=prefix_attn_mask, 
             positions=positions
@@ -324,12 +318,12 @@ class Pi0(_model.BaseModel):
         prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
 
         all_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
-        first_token_logits = all_logits[-200+prompt_length-1:-200+prompt_length, :] # will change this
-
+        first_token_logits = all_logits[-180+prompt_length-1:-180+prompt_length, :] # will change this
 
         last_token = jnp.argmax(first_token_logits, axis=-1)
 
-        token_history = jnp.zeros((batch_size, max_text_len), dtype=jnp.int32)
+        history_len = 20
+        token_history = jnp.zeros((batch_size, history_len), dtype=jnp.int32)
         token_history = token_history.at[:, 0].set(last_token)
     
         step = 1 # start at step 1 since we already ran one forward pass
@@ -354,13 +348,12 @@ class Pi0(_model.BaseModel):
                 kv_cache=cache
             )
             logits = self.PaliGemma.llm(out[0], method="decode_to_logits")
-            
             next_token = jnp.argmax(logits[0], axis=-1)
             
             # Update history
             new_history = history.at[:, step].set(next_token) 
 
-            tokenizer = PaligemmaTokenizer(max_len=200)
+            tokenizer = PaligemmaTokenizer()
             tokens_list = next_token.tolist()
             decoded_text = tokenizer._tokenizer.decode(tokens_list)
             
@@ -370,9 +363,9 @@ class Pi0(_model.BaseModel):
             return (step + 1, next_token, new_cache, new_history)
 
         # can't use a jax loop with dynamic mask arrays
-        while step < max_text_len:
+        while step < 20:
             step, last_token, cache, token_history = text_step(
-                (step, last_token, kv_cache, token_history)
+                (step, last_token, cache, token_history)
             )
 
         return token_history

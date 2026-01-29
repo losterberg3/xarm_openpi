@@ -77,6 +77,7 @@ IMAGE_RESOLUTION = (224, 224)
 #   h,w = image height/width
 #   s = state dimension
 #   l = sequence length
+#   m = memory length
 #
 @at.typecheck
 @struct.dataclass
@@ -99,8 +100,8 @@ class Observation(Generic[ArrayT]):
     # Tokenized prompt mask.
     tokenized_prompt_mask: at.Bool[ArrayT, "*b l"] | None = None
     # tokenized history
-    tokenized_history: at.Int[ArrayT, "b h"] | None = None
-    tokenized_history_mask: at.Bool[ArrayT, "b h"] | None = None
+    tokenized_history: at.Int[ArrayT, "*b m"] | None = None
+    tokenized_history_mask: at.Bool[ArrayT, "*b m"] | None = None
 
     # pi0-fast model specific fields.
 
@@ -210,6 +211,8 @@ def preprocess_observation(
         state=observation.state,
         tokenized_prompt=observation.tokenized_prompt,
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
+        tokenized_history=observation.tokenized_history,
+        tokenized_history_mask=observation.tokenized_history_mask,
         token_ar_mask=observation.token_ar_mask,
         token_loss_mask=observation.token_loss_mask,
     )
