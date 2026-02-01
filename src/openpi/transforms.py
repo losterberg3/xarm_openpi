@@ -265,15 +265,15 @@ class TokenizePrompt(DataTransformFn):
         history = None
         if "history" in data:
             history = data.pop("history")
+            if history[-1] != " ":
+                history = history + " "
         
-        tokens, token_masks, history_tokens, history_mask = self.tokenizer.tokenize(prompt, state, history)
+        tokens, token_masks = self.tokenizer.tokenize(prompt, state, history)
     
         return {
             **data, 
             "tokenized_prompt": tokens, 
             "tokenized_prompt_mask": token_masks,
-            "tokenized_history": history_tokens,
-            "tokenized_history_mask": history_mask
         }
 
 

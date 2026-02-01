@@ -14,7 +14,6 @@ import openpi.shared.download as download
 class PaligemmaTokenizer:
     def __init__(self, max_len: int = 48):
         self._max_len = max_len
-        self._history_len = 20
 
         path = download.maybe_download("gs://big_vision/paligemma_tokenizer.model", gs={"token": "anon"})
         with path.open("rb") as f:
@@ -25,49 +24,40 @@ class PaligemmaTokenizer:
         prompt: str, 
         state: np.ndarray | None = None, 
         history: str | None = None
-        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        if history is None or len(history.strip()) == 0:
-            history_tokens = np.zeros(self._history_len, dtype=np.int32)
-            history_mask = np.zeros(self._history_len, dtype=bool)
-        else:
-            cleaned_history = (history.strip().replace("_", " ").replace("\n", " ").lower())
-            history_tokens = self._tokenizer.encode(cleaned_history, add_bos=False)
-            
-            if len(history_tokens) < self._max_history_len:
-                history_mask = [True] * len(history_tokens) + [False] * (self._max_history_len - len(history_tokens))
-                history_tokens = history_tokens + [0] * (self._max_history_len - len(history_tokens))
-            else:
-                history_tokens = history_tokens[: self._max_history_len]
-                history_mask = [True] * self._max_history_len
-
+        ) -> tuple[np.ndarray, np.ndarray]:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
         if state is not None:
             # This is the Pi05 format, where the state is part of the discrete language input.
             discretized_state = np.digitize(state, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
             state_str = " ".join(map(str, discretized_state))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            # comment out for training, uncomment for querying language output
+            # comment out for action inference
             full_prompt = f"{cleaned_text}"
-            tokens = self._tokenizer.encode(full_prompt, add_bos=True)
+            tokens = self._tokenizer.encode(full_prompt, add_bos=(not history))
         else:
             # This is the Pi0 format, where the state is part of the continuous action expert input.
             # tokenize "\n" separately as the "start of answer" token
-            tokens = self._tokenizer.encode(cleaned_text, add_bos=True) + self._tokenizer.encode("\n")
+            tokens = self._tokenizer.encode(cleaned_text, add_bos=False) + self._tokenizer.encode("\n")
+        # prepending history tokens
+        if history is not None:
+            cleaned_history = (history.strip().replace("_", " ").replace("\n", " ").lower())
+            history_tokens = self._tokenizer.encode(cleaned_history, add_bos=True)
+            tokens = history_tokens + tokens
         tokens_len = len(tokens)
-        if tokens_len < (self._max_len - self._history_len):
-            padding = [False] * (self._max_len - self._history_len - tokens_len)
+        if tokens_len < self._max_len:
+            padding = [False] * (self._max_len - tokens_len)
             mask = [True] * tokens_len + padding
             tokens = tokens + padding
         else:
-            if len(tokens) > (self._max_len - self._history_len):
+            if len(tokens) > self._max_len:
                 logging.warning(
-                    f"Token length ({len(tokens)}) exceeds max length ({self._max_len - self._history_len}), truncating. "
+                    f"Token length ({len(tokens)}) exceeds max length ({self._max_len}), truncating. "
                     "Consider increasing the `max_token_len` in your model config if this happens frequently."
                 )
-            tokens = tokens[: (self._max_len - self._history_len)]
-            mask = [True] * (self._max_len - self._history_len)
+            tokens = tokens[: self._max_len]
+            mask = [True] * self._max_len
 
-        return np.asarray(tokens), np.asarray(mask), np.asarray(history_tokens), np.asarray(history_mask)
+        return np.asarray(tokens), np.asarray(mask)
 
 
 class FASTTokenizer:

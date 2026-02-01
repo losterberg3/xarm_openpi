@@ -126,14 +126,6 @@ class Pi0(_model.BaseModel):
             )
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
-        
-        # add history tokens (if present)
-        if hasattr(obs, 'tokenized_history') and obs.tokenized_history is not None:
-            history_tokens = self.PaliGemma.llm(obs.tokenized_history, method="embed")
-            tokens.append(history_tokens)
-            input_mask.append(obs.tokenized_history_mask)
-            # full attention for history tokens
-            ar_mask += [False] * history_tokens.shape[1]
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -319,7 +311,7 @@ class Pi0(_model.BaseModel):
         prompt_length = jnp.sum(observation.tokenized_prompt_mask, axis=-1)[0].astype(int)
 
         all_logits = self.PaliGemma.llm(prefix_out[0], method="decode_to_logits")
-        first_token_logits = all_logits[-180+prompt_length-1:-180+prompt_length, :] # will change this
+        first_token_logits = all_logits[-200+prompt_length-1:-200+prompt_length, :] # will change this
 
         last_token = jnp.argmax(first_token_logits, axis=-1)
 
@@ -335,10 +327,18 @@ class Pi0(_model.BaseModel):
 
             token_input = jnp.reshape(last_token, (1,1))
             embedded_token = self.PaliGemma.llm(token_input, method="embed")
+            extended_mask = prefix_mask  # This is (1, 968) with True for valid, False for padding
+        
+            # Add mask for all generated tokens (all True since they're all valid)
+            # Shape: (batch, step)
             generated_mask = jnp.ones((batch_size, step), dtype=jnp.bool_)
-            full_mask = jnp.concatenate([prefix_mask, generated_mask], axis=1)
+            
+            # Concatenate to get full mask: prefix + generated tokens
+            # Shape: (batch, cache_len + step)
+            full_mask = jnp.concatenate([extended_mask, generated_mask], axis=1)
             
             # Reshape for attention: (batch, 1, cache_len + step)
+            # The new token (query) can attend to positions where mask is True
             mask = full_mask[:, None, :]
 
             (out, _), new_cache = self.PaliGemma.llm(
