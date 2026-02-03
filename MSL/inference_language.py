@@ -12,6 +12,7 @@ from openpi.models.tokenizer import PaligemmaTokenizer
 base = True
 jit = False
 output_len = 200
+language = True
 
 if base:
     config = _config.get_config("pi05_base")
@@ -21,7 +22,7 @@ else:
     checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=True, jitted_language=jit)
+policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=language, jitted_language=jit)
 # make sure to edit tokenizer.py if you want language to only include the prompt
 
 tokenizer = PaligemmaTokenizer
