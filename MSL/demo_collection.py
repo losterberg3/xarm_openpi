@@ -9,7 +9,7 @@ from pathlib import Path
 # ------------------------
 # Config
 # ------------------------
-REPO_NAME = "clara/examples"
+REPO_NAME = "lars/xarm"
 FPS = 8.0
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
