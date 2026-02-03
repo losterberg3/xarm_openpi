@@ -228,6 +228,7 @@ class Attention(nn.Module):
         probs = jax.nn.softmax(masked_logits, axis=-1).astype(dtype)
 
         encoded = jnp.einsum("BKGTS,BSKH->BTKGH", probs, v)
+
         encoded = einops.rearrange(encoded, "B T K G H -> B T (K G) H")
 
         out = []
@@ -328,6 +329,9 @@ class Block(nn.Module):
         out = sharding.activation_sharding_constraint(out)
         out = jax.tree.map(lambda x: drop(x, deterministic), out)
         xs = [_gated_residual(x, y, gate) for x, y, gate in zip(xs, out, gates, strict=True)]
+        #full_xs = jnp.concatenate([x for x in xs if x is not None], axis=-1)
+        self.sow("intermediates", "residual_stream", xs)
+
         xs = sharding.activation_sharding_constraint(xs)
 
         return xs, kv_cache

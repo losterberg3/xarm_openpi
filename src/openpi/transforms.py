@@ -265,8 +265,6 @@ class TokenizePrompt(DataTransformFn):
         history = None
         if "history" in data:
             history = data.pop("history")
-            if history[-1] != " ":
-                history = history + " "
         
         tokens, token_masks = self.tokenizer.tokenize(prompt, state, history)
     

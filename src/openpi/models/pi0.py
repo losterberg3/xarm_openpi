@@ -226,22 +226,30 @@ class Pi0(_model.BaseModel):
         noise: at.Float[at.Array, "b ah ad"] | None = None,
     ) -> tuple[_model.Actions, Any]:
         observation = _model.preprocess_observation(None, observation, train=False)
-        batch_size = observation.state.shape[0]
-        
-        # first fill KV cache with a forward pass of the prefix
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
-        
-        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
-        positions = jnp.cumsum(prefix_mask, axis=1) - 1
-
-        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
-    
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
         dt = -1.0 / num_steps
+        batch_size = observation.state.shape[0]
         if noise is None:
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
-        
+
+        # first fill KV cache with a forward pass of the prefix
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+        positions = jnp.cumsum(prefix_mask, axis=1) - 1
+
+        # for logging intermediate states
+        (_, _), intermediates = self.PaliGemma.llm(
+            [prefix_tokens, None],
+            mask=prefix_attn_mask,
+            positions=positions,
+            mutable=["intermediates"],
+            kv_cache=None,
+            deterministic=True,
+        )
+
+        _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions, mutable=["intermediates"])
+
         def step(carry):
             x_t, time = carry
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
@@ -272,9 +280,8 @@ class Pi0(_model.BaseModel):
                 adarms_cond=[None, adarms_cond],
             )
             assert prefix_out is None
-            #print(suffix_out[:, -self.action_horizon :])
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
-            #print(v_t)
+
             return x_t + dt * v_t, time + dt
 
         def cond(carry):
@@ -282,8 +289,8 @@ class Pi0(_model.BaseModel):
             # robust to floating-point error
             return time >= -dt / 2
 
-        x_0, _, action = jax.lax.while_loop(cond, step, (noise, 1.0))
-        return x_0
+        x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
+        return x_0, intermediates
 
     @override
     def sample_text(
@@ -301,6 +308,16 @@ class Pi0(_model.BaseModel):
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
 
+        (_, _), intermediates = self.PaliGemma.llm(
+            [prefix_tokens, None],
+            mask=prefix_attn_mask,
+            positions=positions,
+            mutable=["intermediates"],
+            kv_cache=None,
+            deterministic=True,
+        )
+        return intermediates
+        """
         (prefix_out, _), cache = self.PaliGemma.llm(
             [prefix_tokens, None], 
             mask=prefix_attn_mask, 
@@ -369,6 +386,7 @@ class Pi0(_model.BaseModel):
             )
 
         return token_history
+        """
         
     
     @override

@@ -2,10 +2,14 @@ from collections.abc import Sequence
 import logging
 import pathlib
 import time
+import json
 from typing import Any, TypeAlias
+import orbax.checkpoint as ocp
+import os
 
 import flax
 import flax.traverse_util
+from flax.traverse_util import flatten_dict
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -107,7 +111,30 @@ class Policy(BasePolicy):
             actions = np.zeros((10, 10, 10))
         else:
             text_tokens = None
-            actions = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            actions, intermediates = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            text_tokens = intermediates
+            """
+            # Output: dict_keys(['conv1_output'])
+            #print(intermediates['conv1_output'].shape)
+            CKPT_DIR = '/tmp/flax_intermediates/residuals'
+            # Use an Orbax CheckpointManager to handle saving/loading
+            manager = ocp.CheckpointManager(
+                CKPT_DIR,
+                options=ocp.CheckpointManagerOptions(max_to_keep=1)
+            )
+
+            # The intermediates dictionary is a valid pytree and can be saved
+            # A simple way to save a single dictionary without training loop logic is
+            # to use the raw save functionality.
+            # Note: Ensure the directory exists if using raw file saving functions
+            os.makedirs(CKPT_DIR, exist_ok=True)
+
+            # Save to a file using Orbax
+            # The data is saved to a subdirectory (e.g., 'step_0') within CKPT_DIR
+            save_args = ocp.args.StandardSave(intermediates)
+            manager.save(0, args=save_args)
+            print(f"Intermediates saved to {CKPT_DIR}/0")
+            """
         
         outputs = {
             "state": inputs["state"],

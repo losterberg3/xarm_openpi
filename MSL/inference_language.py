@@ -8,9 +8,12 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
+import jax.numpy as jnp
+import jax
 
 base = True
 jit = False
+language = False
 output_len = 200
 
 if base:
@@ -21,7 +24,7 @@ else:
     checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=True, jitted_language=jit)
+policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=language, jitted_language=jit)
 # make sure to edit tokenizer.py if you want language to only include the prompt
 
 tokenizer = PaligemmaTokenizer
@@ -72,19 +75,20 @@ def get_observation():
 
     g_p = np.array([0.22542054951190948])
 
-    prompt = input("Enter prompt for this observation: ").strip()
+    #prompt = input("Enter prompt for this observation: ").strip()
 
     observation = {
         "observation/exterior_image_1_left": b,
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
-        "prompt": prompt,
-        "history": "I just grabbed the yellow bottle and tried to place it on the marker but it fell over.",
+        "prompt": "Describe the image.", #prompt,
+        "history": None,
     }
     return observation
 # "I just grabbed the yellow bottle and tried to place it on the marker but it fell over."
 # query the policy
+step0 = None
 if jit:
     while True:
         try:
@@ -97,7 +101,6 @@ if jit:
             for item in token_list:
                 decoded_text = tokenizer._tokenizer.decode(item)
                 print(f"{decoded_text}", end=" ", flush=True)
-            
 
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
@@ -106,15 +109,26 @@ else:
     while True:
         try:
             observation = get_observation()
-            print("Running inference")
+            #print("Running inference")
             
             # Generate all tokens at once
             inference = policy.infer(observation)
+            if step0 is None:
+                step1 = inference["text_tokens"]
+                step0 = step1
+            else:
+                step0 = step1
+                step1 = inference["text_tokens"]
+            v0 = step0[1][0, 0:768, 0, :]
+            v1 = step1[1][0, 0:768, 0, :]
+            # Calculate how different the scenes are (0.0 to 1.0)
+            similarity = jnp.mean(jax.vmap(lambda x, y: jnp.dot(x, y) / (jnp.linalg.norm(x) * jnp.linalg.norm(y)))(v0, v1))
+            print(f"Scene Similarity: {similarity}")
+
             
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
             continue
-
 
 """
 while True:

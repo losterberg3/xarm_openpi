@@ -9,7 +9,7 @@ from pathlib import Path
 # ------------------------
 # Config
 # ------------------------
-REPO_NAME = "lars/xarm_demos_absolute_pos_8hz"
+REPO_NAME = "clara/examples"
 FPS = 8.0
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
@@ -100,7 +100,7 @@ else:
             },
             "actions": {
                 "dtype": "float32",
-                "shape": (7,),  # We will use joint *velocity* actions here (6D) + gripper position (1D)
+                "shape": (7,),  
                 "names": ["actions"],
             },
         },
