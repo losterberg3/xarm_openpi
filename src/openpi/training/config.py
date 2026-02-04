@@ -479,7 +479,7 @@ class LeRobotXarmDataConfig(DataConfigFactory):
         # We assume joint *velocity* actions, so we should *not* apply an additional delta transform.
         data_transforms = _transforms.Group(
             inputs=[xarm_policy.XarmInputs(model_type=model_config.model_type)],
-            outputs=[xarm_policy.XarmOutputs()],
+            outputs=[xarm_policy.XarmOutputs(model_type=model_config.model_type)],
         )
         
         delta_action_mask = _transforms.make_bool_mask(6, -1)
@@ -1045,7 +1045,7 @@ _CONFIGS = [
             action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
         ema_decay=None,
-        num_train_steps=25_000,
+        num_train_steps=30_000,
         save_interval=2_000,
         overwrite=True, #keep track of this for storage issues
         batch_size=16,

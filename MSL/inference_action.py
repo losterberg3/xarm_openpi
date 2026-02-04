@@ -111,7 +111,7 @@ while True:
         cmd_joint_pose = np.array(action[count,:6])
         
         # execute smooth motion to target via interpolation
-        interpolate_action(state[:6], cmd_joint_pose)
+        #interpolate_action(state[:6], cmd_joint_pose)
         
         cmd_gripper_pose = (action[count,6]) * -860 + 850 # unnormalize the gripper action
         

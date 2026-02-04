@@ -123,6 +123,7 @@ else:
 # ------------------------
 
 recording = False
+prev_data = None  # Buffer to hold the observation for time t
 
 try:
     while True:
@@ -130,19 +131,20 @@ try:
             START_FLAG.unlink()
             print("Starting demo")
             recording = True
+            prev_data = None # Reset buffer for new demo
 
         if STOP_FLAG.exists() and recording:
             STOP_FLAG.unlink()
             print("Ending demo")
             
             recording = False
+            prev_data = None # Clear buffer
             resp = timed_input("Save this demo? [y/n]: ", timeout=6, default="y")
 
             if resp == "y":
                 dataset.save_episode()
                 print("Episode saved")
             else:
-                # Clear the temporary frame buffer without committing to the dataset
                 dataset.reset_episode_buffer()
                 print("Episode discarded")
 
@@ -152,26 +154,35 @@ try:
 
         start = time.perf_counter()
 
-        joints = arm.get_servo_angle(is_radian=True)[1][:6]  # returns tuple (ret_code, data)
-        # Read gripper position (if you have a Robotiq gripper, might be different API)
+        # 1. Capture CURRENT state (Time t+1 relative to prev_data)
+        joints = arm.get_servo_angle(is_radian=True)[1][:6]
         gripper = (arm.get_gripper_position()[1] - 850) / -860
-
-        curr = np.array(joints + [gripper], dtype=np.float32)
+        curr_state = np.array(joints + [gripper], dtype=np.float32)
         
         wrist, base, base2 = read_cameras()
 
-        # ---- Write frame ----
-        dataset.add_frame(
-            {
-                "joint_position": curr[:6],
-                "gripper_position": curr[-1],
-                "actions": curr,
-                "exterior_image_1_left": base,
-                "exterior_image_2_left": base2,
-                "wrist_image_left": wrist,
-                "task": TASK_DESCRIPTION,
-            }
-        )
+        # 2. If we have a previous observation, record it with CURRENT state as the action
+        if prev_data is not None:
+            dataset.add_frame(
+                {
+                    "joint_position": prev_data["joints"],
+                    "gripper_position": prev_data["gripper"],
+                    "actions": curr_state,  # This is the "future" state reached
+                    "exterior_image_1_left": prev_data["base"],
+                    "exterior_image_2_left": prev_data["base2"],
+                    "wrist_image_left": prev_data["wrist"],
+                    "task": TASK_DESCRIPTION,
+                }
+            )
+
+        # 3. Store current observations to be paired with the next frame's state
+        prev_data = {
+            "joints": curr_state[:6],
+            "gripper": curr_state[-1:],
+            "wrist": wrist,
+            "base": base,
+            "base2": base2
+        }
 
         # ---- Timing ----
         elapsed = time.perf_counter() - start
