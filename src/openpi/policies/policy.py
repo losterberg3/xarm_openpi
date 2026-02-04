@@ -105,17 +105,15 @@ class Policy(BasePolicy):
 
         if self._language_out:
             if self._jitted_language:
-                text_tokens = self._sample_text_jit(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+                actions = self._sample_text_jit(sample_rng_or_pytorch_device, observation, **sample_kwargs)
             else:
-                text_tokens = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
-            actions = np.zeros((10, 10, 10))
+                actions = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            intermediates = None
         else:
-            text_tokens = None
             actions, intermediates = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
-            text_tokens = intermediates
+            # if you want to save the intermediates to orbax, uncomment the following lines
             """
             # Output: dict_keys(['conv1_output'])
-            #print(intermediates['conv1_output'].shape)
             CKPT_DIR = '/tmp/flax_intermediates/residuals'
             # Use an Orbax CheckpointManager to handle saving/loading
             manager = ocp.CheckpointManager(
@@ -139,7 +137,7 @@ class Policy(BasePolicy):
         outputs = {
             "state": inputs["state"],
             "actions": actions,
-            "text_tokens": text_tokens,
+            "text_tokens": intermediates,
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:

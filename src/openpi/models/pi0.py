@@ -239,6 +239,7 @@ class Pi0(_model.BaseModel):
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
 
         # for logging intermediate states
+        # TODO: make it so intermediates and kv_cache can be extracted at the same time.
         (_, _), intermediates = self.PaliGemma.llm(
             [prefix_tokens, None],
             mask=prefix_attn_mask,
@@ -307,17 +308,7 @@ class Pi0(_model.BaseModel):
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
-
-        (_, _), intermediates = self.PaliGemma.llm(
-            [prefix_tokens, None],
-            mask=prefix_attn_mask,
-            positions=positions,
-            mutable=["intermediates"],
-            kv_cache=None,
-            deterministic=True,
-        )
-        return intermediates
-        """
+        
         (prefix_out, _), cache = self.PaliGemma.llm(
             [prefix_tokens, None], 
             mask=prefix_attn_mask, 
@@ -386,8 +377,6 @@ class Pi0(_model.BaseModel):
             )
 
         return token_history
-        """
-        
     
     @override
     def sample_text_jit(

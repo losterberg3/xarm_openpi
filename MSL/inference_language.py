@@ -12,8 +12,9 @@ import jax.numpy as jnp
 import jax
 
 base = True
-jit = False
+
 language = False
+jit = False
 output_len = 200
 
 if base:
@@ -83,13 +84,13 @@ def get_observation():
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
         "prompt": "Describe the image.", #prompt,
-        "history": None,
+        "history": None, # "I just grabbed the yellow bottle and tried to place it on the marker but it fell over."
     }
     return observation
-# "I just grabbed the yellow bottle and tried to place it on the marker but it fell over."
+
 # query the policy
 step0 = None
-if jit:
+if language:
     while True:
         try:
             observation = get_observation()
@@ -97,10 +98,11 @@ if jit:
             print("Running inference")
             inference = policy.infer(observation)
             
-            token_list = inference["text_tokens"].tolist()
-            for item in token_list:
-                decoded_text = tokenizer._tokenizer.decode(item)
-                print(f"{decoded_text}", end=" ", flush=True)
+            if jit:
+                token_list = inference["text_tokens"].tolist()
+                for item in token_list:
+                    decoded_text = tokenizer._tokenizer.decode(item)
+                    print(f"{decoded_text}", end=" ", flush=True)
 
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
@@ -109,9 +111,7 @@ else:
     while True:
         try:
             observation = get_observation()
-            #print("Running inference")
             
-            # Generate all tokens at once
             inference = policy.infer(observation)
             if step0 is None:
                 step1 = inference["text_tokens"]
@@ -121,6 +121,7 @@ else:
                 step1 = inference["text_tokens"]
             v0 = step0[1][0, 0:768, 0, :]
             v1 = step1[1][0, 0:768, 0, :]
+
             # Calculate how different the scenes are (0.0 to 1.0)
             similarity = jnp.mean(jax.vmap(lambda x, y: jnp.dot(x, y) / (jnp.linalg.norm(x) * jnp.linalg.norm(y)))(v0, v1))
             print(f"Scene Similarity: {similarity}")
@@ -129,25 +130,3 @@ else:
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
             continue
-
-"""
-while True:
-        try:
-            observation = get_observation()
-
-            print("Running inference")
-            for i in range(output_len):
-                inference = policy.infer(observation)
-                token_list = inference["text_tokens"].tolist()
-                if token_list[0] == 1:
-                    decoded_text = " And,"
-                else:
-                    decoded_text = tokenizer._tokenizer.decode(token_list)
-                
-                print(f"{decoded_text}", end="", flush=True)
-                observation["prompt"] = observation["prompt"] + decoded_text
-
-        except KeyboardInterrupt:
-            print("\nInference interrupted, continuing loop...")
-            continue
-"""
