@@ -18,11 +18,11 @@ manager = ocp.CheckpointManager(
 )
 step0 = manager.restore(5)
 # Load Step 1 (New Scene)
-step1 = manager.restore(1)
+step1 = manager.restore(6)
 for i in range(18):
     # Extract the Value tensors for image tokens (0:768)
-    v0 = step0[1][i, 0, 0:768, 0, :]
-    v1 = step1[1][i, 0, 0:768, 0, :]
+    v0 = step0[1][i, 0, 0:512, 0, :]
+    v1 = step1[1][i, 0, 0:512, 0, :]
     # Calculate how different the scenes are (0.0 to 1.0)
     similarity = jnp.mean(jax.vmap(lambda x, y: jnp.dot(x, y) / (jnp.linalg.norm(x) * jnp.linalg.norm(y)))(v0, v1))
     print(f"Layer {i+1} Scene Similarity: {similarity}")
