@@ -689,7 +689,7 @@ _CONFIGS = [
             ), # change this once you have norm stats
             data_transforms=lambda model: _transforms.Group(
                 inputs=[xarm_policy.XarmInputs(model_type=ModelType.PI05)],
-                outputs=[xarm_policy.XarmOutputs()],
+                outputs=[xarm_policy.XarmOutputs(model_type=ModelType.PI05)],
             )
         ),
     ),
@@ -731,7 +731,7 @@ _CONFIGS = [
             ), # change this once you have norm stats
             data_transforms=lambda model: _transforms.Group(
                 inputs=[xarm_policy.XarmInputs(model_type=ModelType.PI05)],
-                outputs=[xarm_policy.XarmOutputs()],
+                outputs=[xarm_policy.XarmOutputs(model_type=ModelType.PI05)],
             )
         ),
     ),
