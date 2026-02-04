@@ -71,11 +71,6 @@ class XarmInputs(transforms.DataTransformFn):
                 data["prompt"] = data["prompt"].decode("utf-8")
             inputs["prompt"] = data["prompt"]
 
-        if "history" in data:
-            if isinstance(data["history"], bytes):
-                data["history"] = data["history"].decode("utf-8")
-            inputs["history"] = data["history"]
-
         return inputs
 
 

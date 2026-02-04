@@ -22,8 +22,7 @@ class PaligemmaTokenizer:
     def tokenize(
         self, 
         prompt: str, 
-        state: np.ndarray | None = None, 
-        history: str | None = None
+        state: np.ndarray | None = None,
         ) -> tuple[np.ndarray, np.ndarray]:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
         if state is not None:
@@ -31,18 +30,11 @@ class PaligemmaTokenizer:
             discretized_state = np.digitize(state, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
             state_str = " ".join(map(str, discretized_state))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            # comment out for action inference
-            full_prompt = f"{cleaned_text}"
-            tokens = self._tokenizer.encode(full_prompt, add_bos=(not history))
+            tokens = self._tokenizer.encode(full_prompt, add_bos=True)
         else:
             # This is the Pi0 format, where the state is part of the continuous action expert input.
             # tokenize "\n" separately as the "start of answer" token
             tokens = self._tokenizer.encode(cleaned_text, add_bos=False) + self._tokenizer.encode("\n")
-        # prepending history tokens
-        if history is not None:
-            cleaned_history = (history.strip().replace("_", " ").replace("\n", " ").lower())
-            history_tokens = self._tokenizer.encode(cleaned_history, add_bos=True)
-            tokens = history_tokens + tokens
         tokens_len = len(tokens)
         if tokens_len < self._max_len:
             padding = [False] * (self._max_len - tokens_len)

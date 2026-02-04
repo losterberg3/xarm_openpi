@@ -82,7 +82,6 @@ def get_observation():
         "observation/gripper_position": g_p,
         "observation/joint_position": state[:6],
         "prompt": prompt,
-        "history": "I just grabbed the yellow bottle and tried to place it on the marker but it fell over.",
     }
     return observation
 
