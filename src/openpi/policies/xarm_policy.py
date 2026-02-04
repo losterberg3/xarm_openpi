@@ -81,8 +81,13 @@ class XarmInputs(transforms.DataTransformFn):
 
 @dataclasses.dataclass(frozen=True)
 class XarmOutputs(transforms.DataTransformFn):
+    model_type: _model.ModelType
+
     def __call__(self, data: dict) -> dict:
-        # Only return the first 7 dims.
-        return {"actions": np.asarray(data["actions"][:, :7]),
-        "text_tokens": data["text_tokens"],
-        }
+        if self.model_type is _model.ModelType.PI0_FAST:
+            return {"actions": np.asarray(data["actions"][:])}
+                
+        return {"actions": np.asarray(data["actions"][:, :7])}
+             
+        
+        

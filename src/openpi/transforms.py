@@ -265,8 +265,6 @@ class TokenizePrompt(DataTransformFn):
         history = None
         if "history" in data:
             history = data.pop("history")
-            if history[-1] != " ":
-                history = history + " "
         
         tokens, token_masks = self.tokenizer.tokenize(prompt, state, history)
     
@@ -287,6 +285,9 @@ class TokenizeFASTInputs(DataTransformFn):
 
         if not isinstance(prompt, str):
             prompt = prompt.item()
+
+        if data["history"] is not None:
+            data["history"] = None
 
         state, actions = data["state"], data.get("actions")
         tokens, token_mask, ar_mask, loss_mask = self.tokenizer.tokenize(prompt, state, actions)

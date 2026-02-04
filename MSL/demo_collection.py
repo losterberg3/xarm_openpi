@@ -1,4 +1,6 @@
 import time
+import sys
+import select
 import numpy as np
 import pyrealsense2 as rs
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -54,6 +56,15 @@ def read_cameras():
     exterior = np.asanyarray(exterior.get_data())
     exterior2 = np.zeros_like(exterior)
     return wrist, exterior, exterior2
+
+def timed_input(prompt, timeout, default="y"):
+    print(prompt, end="", flush=True)
+    ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    if ready:
+        return sys.stdin.readline().strip().lower()
+    else:
+        print(f"\nNo response after {timeout}s → defaulting to '{default}'")
+        return default
 
 # ------------------------
 # Create dataset
@@ -112,26 +123,27 @@ else:
 # ------------------------
 
 recording = False
-#prev = None
 
 try:
     while True:
         if START_FLAG.exists() and not recording:
             START_FLAG.unlink()
             print("Starting demo")
-
-            #prev_joints = arm.get_servo_angle(is_radian=True)[1][:6]
-            #prev_gripper = (arm.get_gripper_position()[1] - 850) / -860
-            #prev = np.array(prev_joints + [prev_gripper], dtype=np.float32)
             recording = True
 
         if STOP_FLAG.exists() and recording:
             STOP_FLAG.unlink()
             print("Ending demo")
-            #prev = None
+            
             recording = False
-            dataset.save_episode()
-            print("Episode saved")
+            resp = timed_input("Save this demo? [y/n]: ", timeout=6, default="y")
+
+            if resp == "y":
+                dataset.save_episode()
+                print("Episode saved")
+            else:
+                dataset.discard_episode()
+                print("Episode discarded")
 
         if not recording:
             time.sleep(0.05)
@@ -139,7 +151,6 @@ try:
 
         start = time.perf_counter()
 
-        # ---- Observation ----
         joints = arm.get_servo_angle(is_radian=True)[1][:6]  # returns tuple (ret_code, data)
         # Read gripper position (if you have a Robotiq gripper, might be different API)
         gripper = (arm.get_gripper_position()[1] - 850) / -860

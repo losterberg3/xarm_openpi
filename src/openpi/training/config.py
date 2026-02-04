@@ -709,6 +709,19 @@ _CONFIGS = [
         ),
     ),
     TrainConfig(
+        name="pi05_xarm_FAST",
+        model=pi0_fast.Pi0FASTConfig(),
+        data=SimpleDataConfig(
+            assets=AssetsConfig(
+                asset_id="xarm",
+            ),
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[xarm_policy.XarmInputs(model_type=ModelType.PI0_FAST)],
+                outputs=[xarm_policy.XarmOutputs(model_type=ModelType.PI0_FAST)],
+            ),
+        ),
+    ),
+    TrainConfig(
         name="pi05_xarm_droid",
         model=pi0_config.Pi0Config(action_horizon=50, pi05=True),
         data=SimpleDataConfig(

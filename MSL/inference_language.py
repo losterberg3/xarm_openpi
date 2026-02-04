@@ -10,29 +10,30 @@ from openpi.models.tokenizer import PaligemmaTokenizer
 
 
 base = True
-jit = False
-output_len = 200
-language = True
+fast = True
 
 if base:
-    config = _config.get_config("pi05_base")
+    if fast:
+        config = _config.get_config("pi05_xarm_FAST")
+    else:
+        config = _config.get_config("pi05_base")
     checkpoint_dir = download.maybe_download("gs://openpi-assets/checkpoints/pi05_base")
 else:
     config = _config.get_config("pi05_xarm")
     checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=language, jitted_language=jit)
+policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out= not fast)
 # make sure to edit tokenizer.py if you want language to only include the prompt
 
-tokenizer = PaligemmaTokenizer
+tokenizer = PaligemmaTokenizer()
 
 # Connect to cameras
 ctx = rs.context()
 devices = ctx.query_devices()
 
-if len(devices) < 2:
-    raise RuntimeError("Need at least two RealSense cameras connected")
+#if len(devices) < 2:
+#    raise RuntimeError("Need at least two RealSense cameras connected")
 
 serials = [dev.get_info(rs.camera_info.serial_number) for dev in devices]
 print("Found cameras:", serials)
@@ -54,14 +55,14 @@ for serial in serials:
 
 def get_observation():
     frames_wrist = pipelines[0].wait_for_frames()
-    frames_exterior = pipelines[1].wait_for_frames()
+    #frames_exterior = pipelines[1].wait_for_frames()
 
     wrist = frames_wrist.get_color_frame()
-    exterior = frames_exterior.get_color_frame()
+    #exterior = frames_exterior.get_color_frame()
 
     a = np.asanyarray(wrist.get_data())
-    b = np.asanyarray(exterior.get_data())
-
+    #b = np.asanyarray(exterior.get_data())
+    b = a
     # use norm stats for state, this doesn't end up going anywhere
     # since we omit it from the prompt
     state = np.array([-0.20991884171962738,
@@ -84,9 +85,9 @@ def get_observation():
         "history": "I just grabbed the yellow bottle and tried to place it on the marker but it fell over.",
     }
     return observation
-# "I just grabbed the yellow bottle and tried to place it on the marker but it fell over."
+
 # query the policy
-if jit:
+if fast:
     while True:
         try:
             observation = get_observation()
@@ -94,10 +95,11 @@ if jit:
             print("Running inference")
             inference = policy.infer(observation)
             
-            token_list = inference["text_tokens"].tolist()
+            token_list = inference["actions"].tolist()
             for item in token_list:
-                decoded_text = tokenizer._tokenizer.decode(item)
-                print(f"{decoded_text}", end=" ", flush=True)
+                print(item)
+                #decoded_text = tokenizer._tokenizer.decode(item)
+                #print(f"{decoded_text}", end=" ", flush=True)
             
 
         except KeyboardInterrupt:
@@ -115,26 +117,3 @@ else:
         except KeyboardInterrupt:
             print("\nInference interrupted, continuing loop...")
             continue
-
-
-"""
-while True:
-        try:
-            observation = get_observation()
-
-            print("Running inference")
-            for i in range(output_len):
-                inference = policy.infer(observation)
-                token_list = inference["text_tokens"].tolist()
-                if token_list[0] == 1:
-                    decoded_text = " And,"
-                else:
-                    decoded_text = tokenizer._tokenizer.decode(token_list)
-                
-                print(f"{decoded_text}", end="", flush=True)
-                observation["prompt"] = observation["prompt"] + decoded_text
-
-        except KeyboardInterrupt:
-            print("\nInference interrupted, continuing loop...")
-            continue
-"""
