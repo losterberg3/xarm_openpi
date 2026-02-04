@@ -2,10 +2,10 @@ import orbax.checkpoint as ocp
 import jax.numpy as jnp
 import jax
 
-def distill_scene(checkpoint_tuple):
+def distill_scene(checkpoint_tuple, i):
     v_states = checkpoint_tuple[1] 
 
-    states = v_states[-1, 0, :, 0, :]
+    states = v_states[i, 0, :, 0, :]
 
     scene_vector = jnp.mean(states[0:768, :], axis=0)
     return scene_vector
@@ -16,17 +16,16 @@ manager = ocp.CheckpointManager(
     CKPT_DIR,
     options=ocp.CheckpointManagerOptions(max_to_keep=100)
 )
-step0 = manager.restore(7)
+step0 = manager.restore(5)
 # Load Step 1 (New Scene)
-step1 = manager.restore(4)
-
-# Extract the Value tensors for image tokens (0:768)
-v0 = step0[1][-1, 0, 0:768, 0, :]
-v1 = step1[1][-1, 0, 0:768, 0, :]
-print(step0[1][-1, 0, 0, 0, 0])
-# Calculate how different the scenes are (0.0 to 1.0)
-similarity = jnp.mean(jax.vmap(lambda x, y: jnp.dot(x, y) / (jnp.linalg.norm(x) * jnp.linalg.norm(y)))(v0, v1))
-print(f"Scene Similarity: {similarity}")
+step1 = manager.restore(1)
+for i in range(18):
+    # Extract the Value tensors for image tokens (0:768)
+    v0 = step0[1][i, 0, 0:768, 0, :]
+    v1 = step1[1][i, 0, 0:768, 0, :]
+    # Calculate how different the scenes are (0.0 to 1.0)
+    similarity = jnp.mean(jax.vmap(lambda x, y: jnp.dot(x, y) / (jnp.linalg.norm(x) * jnp.linalg.norm(y)))(v0, v1))
+    print(f"Layer {i+1} Scene Similarity: {similarity}")
 
 """
 # If you used a single unnamed sow, it may look like:
