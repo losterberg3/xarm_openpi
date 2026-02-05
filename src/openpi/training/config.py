@@ -698,12 +698,11 @@ _CONFIGS = [
         model=pi0_config.Pi0Config(action_horizon=50, pi05=True),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            #repo_id="lars/xarm_demos_absolute_pos_8hz",  # just for training, locating the dataset
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
-                assets_dir="/home/larsosterberg/MSL/openpi/assets/pi05_xarm_finetune", # this might not be necessary
+                #assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
                 asset_id="lars/xarm_demos_absolute_pos_8hz", # for norm stats (inference and training)
             ),
         ),
@@ -1075,6 +1074,14 @@ _CONFIGS = [
                 asset_id="lars/xarm_demos_absolute_pos_2_3",
             ),
         ),
+        checkpoint_base_dir="/home/larso33/data/checkpoints",
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=10_000,
+            peak_lr=5e-5,
+            decay_steps=30_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
@@ -1091,7 +1098,7 @@ _CONFIGS = [
         wandb_enabled=True,
     ),
     # then to run training ->
-    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_coruscant --exp-name=lars_abs_pos_batch128 --overwrite
+    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_coruscant --exp-name=lars_abs_pos_batch64 --overwrite
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
     #

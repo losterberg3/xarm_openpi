@@ -9,9 +9,9 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-DT = 1.0 # your timestep
+DT = 5 # your timestep
 CONTROL_HZ = 40.0 # keep as a multiple of 10
-ACTION_ROLLOUT = 30 
+ACTION_ROLLOUT = 30
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
@@ -25,7 +25,7 @@ arm.set_gripper_mode(0)
 
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/MSL/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos/24999")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos2/29999")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
@@ -101,7 +101,9 @@ while True:
 
     init_joints = observation["observation/joint_position"]
     init_gripper = observation["observation/gripper_position"]
+    print("state")
     print(init_joints)
+    DT = 5.0
     while count < ACTION_ROLLOUT:
         t0 = time.perf_counter()
         code, angles = arm.get_servo_angle(is_radian=True)
@@ -111,14 +113,16 @@ while True:
         cmd_joint_pose = np.array(action[count,:6])
         
         # execute smooth motion to target via interpolation
-        #interpolate_action(state[:6], cmd_joint_pose)
-        
+        interpolate_action(state[:6], cmd_joint_pose)
+        print("command")
+        print(cmd_joint_pose)
         cmd_gripper_pose = (action[count,6]) * -860 + 850 # unnormalize the gripper action
         
         #arm.set_servo_angle(servo_id=8, angle=cmd_joint_pose, is_radian=True) 
-        #arm.set_gripper_position(cmd_gripper_pose)
+        arm.set_gripper_position(cmd_gripper_pose)
 
         count += 1
         time_left = DT - (time.perf_counter() - t0)
+        DT = 0.5
         time.sleep(max(time_left,0))
     
