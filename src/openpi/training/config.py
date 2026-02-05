@@ -1053,7 +1053,45 @@ _CONFIGS = [
     ),
     # then to run training ->
     # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_abs_pos --overwrite
-
+    TrainConfig(
+        # This config is for fine-tuning pi05-Xarm on a custom Xarm dataset.
+        # Here, we use LeRobot data format (like for all other fine-tuning examples)
+        name="pi05_xarm_coruscant",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora", 
+            action_expert_variant="gemma_300m_lora"
+        ),
+        data=LeRobotXarmDataConfig(
+            # Replace with your custom Xarm LeRobot dataset repo id.
+            repo_id="lars/xarm_demos_absolute_pos_2_3",  # change this
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_coruscant
+                # Then possibly use those norm stats and change below
+                assets_dir="/home/larso33/openpi/assets/pi05_xarm_coruscant", # this might not be necessary
+                asset_id="lars/xarm_demos_absolute_pos_2_3",
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora", 
+            action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=30_000,
+        save_interval=2_000,
+        overwrite=True, #keep track of this for storage issues
+        batch_size=64,
+        wandb_enabled=True,
+    ),
+    # then to run training ->
+    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_coruscant --exp-name=lars_abs_pos_batch128 --overwrite
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
     #
