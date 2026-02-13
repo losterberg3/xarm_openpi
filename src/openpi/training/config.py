@@ -703,7 +703,7 @@ _CONFIGS = [
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
                 #assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                asset_id="lars/xarm_demos_absolute_pos_2_3", # for norm stats (inference and training)
+                asset_id="lars/xarm_demos_eef", # for norm stats (inference and training)
             ),
         ),
     ),

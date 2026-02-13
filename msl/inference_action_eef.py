@@ -9,9 +9,10 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-DT = 0.25 # your timestep
+FPS = 20.0
+DT = 1 / FPS # your timestep
 CONTROL_HZ = 40.0 # keep as a multiple of 10
-ACTION_ROLLOUT = 20
+ACTION_ROLLOUT = 30
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
@@ -25,7 +26,7 @@ arm.set_gripper_mode(0)
 
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos_2_6/20000")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/25000")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
@@ -49,7 +50,7 @@ for serial in serials:
     config = rs.config()
     config.enable_device(serial)
     # Enable streams (color + depth if you want)
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.rgb8, 60)
+    config.enable_stream(rs.stream.color, 320, 240, rs.format.rgb8, 30)
     pipeline.start(config)
     pipelines.append(pipeline)
     configs.append(config)
@@ -64,16 +65,19 @@ def get_observation():
     a = np.asanyarray(wrist.get_data())
     b = np.asanyarray(exterior.get_data())
 
-    code, angles = arm.get_servo_angle(is_radian=True)
+    pose = arm.get_position()[1]
+    pose[3] = pose[3] % 360
+    pose[5] = pose[5] % 360
+    angles_rad = (np.array(pose[3:6]) * np.pi / 180).tolist()
+    state = np.array(pose[:3] + angles_rad, dtype=np.float32)
     code, g_p = arm.get_gripper_position()
-    state = np.array(angles)
     g_p = np.array((g_p - 850) / -860)
 
     observation = {
         "observation/exterior_image_1_left": b,
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
-        "observation/joint_position": state[:6],
+        "observation/joint_position": state,
         "prompt": "Grab the yellow bottle and place it on the pink marker",
     }
     return observation
@@ -101,9 +105,9 @@ while True:
 
     init_joints = observation["observation/joint_position"]
     init_gripper = observation["observation/gripper_position"]
-    print("state")
-    print(init_gripper)
-    DT = 3.0
+    #print("state")
+    #print(init_joints)
+    
     while count < ACTION_ROLLOUT:
         t0 = time.perf_counter()
         code, angles = arm.get_servo_angle(is_radian=True)
@@ -111,9 +115,12 @@ while True:
         
         # get the target angles
         cmd_joint_pose = np.array(action[count,:6])
+        cmd_joint_pose[3:6] = cmd_joint_pose[3:6] / np.pi * 180
+        cmd_joint_pose[3] = (cmd_joint_pose[3] + 180) % 360 -180
+        cmd_joint_pose[5] = (cmd_joint_pose[5] + 180) % 360 -180
         
         # execute smooth motion to target via interpolation
-        interpolate_action(state[:6], cmd_joint_pose)
+        #interpolate_action(state[:6], cmd_joint_pose)
         print("command")
         #print(cmd_joint_pose)
         cmd_gripper_pose = (action[count,6]) * -860 + 850 # unnormalize the gripper action
@@ -123,6 +130,6 @@ while True:
 
         count += 1
         time_left = DT - (time.perf_counter() - t0)
-        DT = 0.125
+        
         time.sleep(max(time_left,0))
     
