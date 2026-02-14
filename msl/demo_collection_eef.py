@@ -11,12 +11,12 @@ from pathlib import Path
 # ------------------------
 # Config
 # ------------------------
-REPO_NAME = "lars/xarm_demos_eef"
+REPO_NAME = "lars/xarm_history_exp_v1"
 FPS = 20.0
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
-TASK_DESCRIPTION = "Grab the yellow bottle and place it on the pink marker"
+TASK_DESCRIPTION = "Drop the "
 
 START_FLAG = Path("/tmp/start_demo")
 STOP_FLAG  = Path("/tmp/stop_demo")

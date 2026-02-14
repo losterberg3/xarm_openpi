@@ -1026,13 +1026,13 @@ _CONFIGS = [
         ),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            repo_id="lars/xarm_demos_eef",  # change this
+            repo_id="lars/xarm_history_exp_v1",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
                 assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                asset_id="lars/xarm_demos_eef",
+                asset_id="lars/xarm_history_exp_v1",
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
@@ -1058,7 +1058,7 @@ _CONFIGS = [
         wandb_enabled=True,
     ),
     # then to run training ->
-    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_eef_2_11 --overwrite
+    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_history_exp_v1 --overwrite
     TrainConfig(
         # This config is for fine-tuning pi05-Xarm on a custom Xarm dataset.
         # Here, we use LeRobot data format (like for all other fine-tuning examples)
