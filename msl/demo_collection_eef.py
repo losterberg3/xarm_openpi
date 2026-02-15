@@ -16,7 +16,7 @@ FPS = 20.0
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
-TASK_DESCRIPTION = "Drop the "
+TASK_DESCRIPTION = "Drop the block in the cup and then knock that same cup over"
 
 START_FLAG = Path("/tmp/start_demo")
 STOP_FLAG  = Path("/tmp/stop_demo")

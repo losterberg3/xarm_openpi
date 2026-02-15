@@ -26,7 +26,7 @@ arm.set_gripper_mode(0)
 
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/20000")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/26000")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
