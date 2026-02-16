@@ -152,7 +152,7 @@ try:
                 dataset.save_episode()
                 print("Episode saved")
             else:
-                dataset.reset_episode_buffer()
+                dataset = LeRobotDataset(root=dataset_path, repo_id=REPO_NAME)
                 print("Episode discarded")
 
         if not recording:

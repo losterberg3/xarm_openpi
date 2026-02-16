@@ -26,7 +26,7 @@ arm.set_gripper_mode(0)
 
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/26000")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_history_exp_v1/25000")
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
@@ -78,12 +78,12 @@ def get_observation():
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state,
-        "prompt": "Grab the yellow bottle and place it on the pink marker",
+        "prompt": "Drop the block in the cup and then knock that same cup over",
     }
     return observation
 
 def interpolate_action(state, goal):
-    delta_increment = (goal - state) / (DT * CONTROL_HZ * 6)
+    delta_increment = (goal - state) / (DT * CONTROL_HZ)
 
     for i in range(int(DT * CONTROL_HZ)):
         start = time.perf_counter()
@@ -129,8 +129,7 @@ while True:
         
         # execute smooth motion to target via interpolation
         interpolate_action(state, cmd_joint_pose)
-        #print("command")
-        #print(cmd_joint_pose)
+        
         cmd_gripper_pose = (action[count,6]) * -860 + 850 # unnormalize the gripper action
         arm.set_gripper_position(cmd_gripper_pose)
 
