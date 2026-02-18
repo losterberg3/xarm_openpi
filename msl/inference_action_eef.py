@@ -12,7 +12,7 @@ from openpi.models.tokenizer import PaligemmaTokenizer
 FPS = 20.0
 DT = 1.0 / FPS # your timestep
 CONTROL_HZ = 40.0 # keep as a multiple of 10
-ACTION_ROLLOUT = 20
+ACTION_ROLLOUT = 30
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
