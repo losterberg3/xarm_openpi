@@ -11,10 +11,10 @@ from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
 FPS = 20.0
-DT = 1.0 / FPS            # control timestep (s)
-CONTROL_HZ = 40.0         # used inside your interpolate loop (must remain multiple of 10)
+DT = 1.0 / FPS 
+CONTROL_HZ = 40.0     
 ACTION_ROLLOUT = 20      
-CAMERA_FRAMES_TIMEOUT = 0.5  # seconds to wait for camera frames in grabber
+CAMERA_FRAMES_TIMEOUT = 0.5
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
