@@ -27,7 +27,7 @@ arm.set_gripper_enable(enable=True)
 arm.set_gripper_mode(0)
 
 config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_history_exp_v1/25000")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/25000")
 
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
 
@@ -108,7 +108,7 @@ def build_observation_from_latest():
         "observation/wrist_image_left": wrist,
         "observation/gripper_position": g_p,
         "observation/joint_position": state,
-        "prompt": "Drop the block in the cup and then knock that same cup over",
+        "prompt": "Grab the yellow bottle and place it on the pink marker",
     }
     return observation
 
