@@ -1,6 +1,7 @@
 import time
 import sys
 import select
+import threading
 import numpy as np
 import pyrealsense2 as rs
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -8,15 +9,16 @@ from lerobot.common.constants import HF_LEROBOT_HOME
 from xarm.wrapper import XArmAPI
 from pathlib import Path
 
+
 # ------------------------
 # Config
 # ------------------------
-REPO_NAME = "lars/xarm_history_exp_v1"
+REPO_NAME = "lars/xarm_history_exp_v2"
 FPS = 20.0
 DT = 1.0 / FPS
 ARM_IP = "192.168.1.219"
 
-TASK_DESCRIPTION = "Drop the block in the cup and then knock that same cup over"
+TASK_DESCRIPTION = "Drop the block in the box and then tap that box"
 
 START_FLAG = Path("/tmp/start_demo")
 STOP_FLAG  = Path("/tmp/stop_demo")
@@ -33,6 +35,56 @@ if STOP_FLAG.exists():
 # ------------------------
 arm = XArmAPI(ARM_IP)
 arm.connect()
+
+_robot_lock = threading.Lock()
+_latest_pose = None        # will store the full pose list from arm.get_position()[1]
+_latest_gripper = None     # will store the scalar gripper raw value
+
+_poller_running = True     # used to stop the poller on shutdown
+
+def _robot_poller():
+    """Continuously poll the robot for state and update the cached variables.
+
+    Keep this as tight as reasonable but yield occasionally to avoid hammering.
+    """
+    global _latest_pose, _latest_gripper, _poller_running
+    while _poller_running:
+        try:
+            # These are the blocking calls we want to isolate from the main loop
+            pos_result = arm.get_position()
+            gripper_result = arm.get_gripper_position()
+
+            if pos_result is not None and len(pos_result) > 1:
+                pose = pos_result[1]
+            else:
+                pose = None
+
+            if gripper_result is not None and len(gripper_result) > 1:
+                gr = gripper_result[1]
+            else:
+                gr = None
+
+            # write into cached vars under lock
+            with _robot_lock:
+                if pose is not None:
+                    _latest_pose = pose[:]   # make a shallow copy (list)
+                if gr is not None:
+                    _latest_gripper = gr
+
+        except Exception as e:
+            # don't crash poller on intermittent errors; print once in a while
+            # (you can replace with logging)
+            print("robot poller error:", e)
+            time.sleep(0.01)
+
+        # Sleep a small amount; controller runs ~8 ms so polling at ~200 Hz is pointless.
+        # 50 Hz is plenty to keep the cache fresh; reduce CPU usage.
+        time.sleep(0.01)  # 10 ms
+
+
+# Start poller thread BEFORE entering main loop
+_poller_thread = threading.Thread(target=_robot_poller, daemon=True)
+_poller_thread.start()
 
 # Connect to cameras
 ctx = rs.context()
@@ -160,21 +212,32 @@ try:
             continue
 
         start = time.perf_counter()
-
+        print("start")
+        print(start)
         # 1. Capture CURRENT state (Time t+1 relative to prev_data)
         #joints = arm.get_servo_angle(is_radian=True)[1][:6]
-        pose = arm.get_position()[1]
+        with _robot_lock:
+            cached_pose = None if _latest_pose is None else list(_latest_pose)
+            cached_gr = _latest_gripper
+
+        if cached_pose is None or cached_gr is None:
+            # Cache not warmed yet; wait a tiny bit and continue so we don't block.
+            # You can change behavior to busy-wait a few ms if you prefer.
+            time.sleep(0.005)
+            continue
+
+        pose = cached_pose
         pose[3] = pose[3] % 360
         pose[5] = pose[5] % 360
         # ensure roll and yaw are continuous, also make sure pitch doesn't exceed 90 deg
         # when collecting demos
         angles_rad = (np.array(pose[3:6]) * np.pi / 180).tolist()
     
-        gripper = (arm.get_gripper_position()[1] - 850) / -860
+        gripper = (cached_gr - 850) / -860
         curr_state = np.array(pose[:3] + angles_rad + [gripper], dtype=np.float32)
-        
+        print(time.perf_counter())
         wrist, base, base2 = read_cameras()
-
+        print(time.perf_counter())
         # 2. If we have a previous observation, record it with CURRENT state as the action
         if prev_data is not None:
             dataset.add_frame(
@@ -206,6 +269,9 @@ except KeyboardInterrupt:
     print("Shutting down")
 
 finally:
+    _poller_running = False
+    _poller_thread.join(timeout=1.0)
+
     for p in pipelines:
         p.stop()
     arm.disconnect()
