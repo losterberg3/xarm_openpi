@@ -164,7 +164,7 @@ try:
 
         # 1. Capture CURRENT state (Time t+1 relative to prev_data)
         pose = arm.get_position()[1]
-        rot = R.from_euler('xyz', pose[3:6], degrees=True)
+        rot = Rotation.from_euler('xyz', pose[3:6], degrees=True)
         quat = rot.as_quat() 
     
         gripper = (arm.get_gripper_position()[1] - 850) / -860
