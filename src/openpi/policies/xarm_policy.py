@@ -12,7 +12,7 @@ def make_xarm_example() -> dict:
     return {
         "observation/exterior_image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
         "observation/wrist_image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
-        "observation/joint_position": np.random.rand(6),
+        "observation/eef_position": np.random.rand(7),
         "observation/gripper_position": np.random.rand(1),
         "prompt": "do something",
     }
@@ -37,7 +37,7 @@ class XarmInputs(transforms.DataTransformFn):
         if gripper_pos.ndim == 0:
             # Ensure gripper position is a 1D array, not a scalar, so we can concatenate with joint positions
             gripper_pos = gripper_pos[np.newaxis]
-        state = np.concatenate([data["observation/joint_position"], gripper_pos])
+        state = np.concatenate([data["observation/eef_position"], gripper_pos])
 
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference
@@ -82,7 +82,7 @@ class XarmOutputs(transforms.DataTransformFn):
         if self.model_type is _model.ModelType.PI0_FAST:
             return {"actions": np.asarray(data["actions"][:])}
                 
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        return {"actions": np.asarray(data["actions"][:, :8])}
              
         
         
