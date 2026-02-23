@@ -67,7 +67,7 @@ def main(repo_id: str, output_dir: str = "", num_episodes_per_task: int = 1, fps
 
             frames = []
             for _, row in df.iterrows():
-                img_data = row["image"]
+                img_data = row["exterior_image_1_left"]
                 if isinstance(img_data, dict) and "bytes" in img_data:
                     img = Image.open(io.BytesIO(img_data["bytes"]))
                     frames.append(np.array(img))
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize LeRobot dataset")
     parser.add_argument("--repo_id", type=str, default="lars/xarm_history_exp_v2",
                         help="LeRobot dataset repo ID")
-    parser.add_argument("--output_dir", type=str, default="",
+    parser.add_argument("--output_dir", type=str, default="~/msl/openpi/msl",
                         help="Output directory for videos")
     parser.add_argument("--num_episodes_per_task", type=int, default=1,
                         help="Number of episodes to save per task")
