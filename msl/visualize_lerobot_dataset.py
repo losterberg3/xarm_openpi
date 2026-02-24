@@ -29,7 +29,7 @@ def main(repo_id: str, output_dir: str = "", num_episodes_per_task: int = 1, fps
     # Set output directory
     if not output_dir:
         repo_name = repo_id.split("/")[-1]
-        output_dir = f"data/libero/dataset_viz_{repo_name}"
+        output_dir = f"data/xarm/dataset_viz_{repo_name}"
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,9 +104,9 @@ def main(repo_id: str, output_dir: str = "", num_episodes_per_task: int = 1, fps
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize LeRobot dataset")
-    parser.add_argument("--repo_id", type=str, default="lars/xarm_history_exp_v2",
+    parser.add_argument("--repo_id", type=str, default="lars/xarm_demos_eef",
                         help="LeRobot dataset repo ID")
-    parser.add_argument("--output_dir", type=str, default="~/msl/openpi/msl",
+    parser.add_argument("--output_dir", type=str, default="/home/larsosterberg/msl/vjepa2/msl",
                         help="Output directory for videos")
     parser.add_argument("--num_episodes_per_task", type=int, default=1,
                         help="Number of episodes to save per task")
