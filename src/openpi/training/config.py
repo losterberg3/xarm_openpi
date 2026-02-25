@@ -476,16 +476,21 @@ class LeRobotXarmDataConfig(DataConfigFactory):
                 )
             ]
         )
-        # We assume joint *velocity* actions, so we should *not* apply an additional delta transform.
+        
         data_transforms = _transforms.Group(
             inputs=[xarm_policy.XarmInputs(model_type=model_config.model_type)],
             outputs=[xarm_policy.XarmOutputs(model_type=model_config.model_type)],
         )
         
-        delta_action_mask = _transforms.make_bool_mask(7, -1)
+        #delta_action_mask = _transforms.make_bool_mask(7, -1)
+        #data_transforms = data_transforms.push(
+        #    inputs=[_transforms.DeltaActions(delta_action_mask)],
+        #    outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+        #)
+
         data_transforms = data_transforms.push(
-            inputs=[_transforms.DeltaActions(delta_action_mask)],
-            outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            inputs=[_transforms.DeltaActionsQuat()],
+            outputs=[_transforms.AbsoluteActionsQuat()],
         )
         
         model_transforms = ModelTransformFactory()(model_config)

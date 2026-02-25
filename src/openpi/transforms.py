@@ -2,6 +2,7 @@ from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 import re
 from typing import Protocol, TypeAlias, TypeVar, runtime_checkable
+from scipy.spatial.transform import Rotation
 
 import flax.traverse_util as traverse_util
 import jax
@@ -135,8 +136,12 @@ class Normalize(DataTransformFn):
         )
 
     def _normalize(self, x, stats: NormStats):
-        mean, std = stats.mean[..., : x.shape[-1]], stats.std[..., : x.shape[-1]]
-        return (x - mean) / (std + 1e-6)
+        # note for quaternions, we dont normalize
+        x_scalar = x[..., :3]
+        #x_quat = x[..., 3:]
+        mean, std = stats.mean[..., : x_scalar.shape[-1]], stats.std[..., : x_scalar.shape[-1]]
+        x[..., :3] = (x_scalar - mean) / (std + 1e-6)
+        return x
 
     def _normalize_quantile(self, x, stats: NormStats):
         assert stats.q01 is not None
@@ -168,9 +173,11 @@ class Unnormalize(DataTransformFn):
         )
 
     def _unnormalize(self, x, stats: NormStats):
-        mean = pad_to_dim(stats.mean, x.shape[-1], axis=-1, value=0.0)
-        std = pad_to_dim(stats.std, x.shape[-1], axis=-1, value=1.0)
-        return x * (std + 1e-6) + mean
+        x_scalar = x[..., :3]
+        mean = pad_to_dim(stats.mean, x_scalar.shape[-1], axis=-1, value=0.0)
+        std = pad_to_dim(stats.std, x_scalar.shape[-1], axis=-1, value=1.0)
+        x[..., :3] = x_scalar * (std + 1e-6) + mean
+        return x
 
     def _unnormalize_quantile(self, x, stats: NormStats):
         assert stats.q01 is not None
@@ -216,7 +223,34 @@ class DeltaActions(DataTransformFn):
         state, actions = data["state"], data["actions"]
         mask = np.asarray(self.mask)
         dims = mask.shape[-1]
+
         actions[..., :dims] -= np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
+        data["actions"] = actions
+
+        return data
+
+@dataclasses.dataclass(frozen=True)
+class DeltaActionsQuat(DataTransformFn):
+    """Repacks absolute actions into delta action space with quaternion support."""
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "actions" not in data or "state" not in data:
+            return data
+
+        state, actions = data["state"], data["actions"]
+        actions[..., :3] = actions[..., :3] - state[..., None, :3]
+        state_quat = state[..., 3:7]
+        actions_quat = actions[..., 3:7]
+        orig_shape = actions_quat.shape 
+        state_quat_expanded = np.expand_dims(state_quat, axis=-2)
+        state_quat_expanded = np.broadcast_to(state_quat_expanded, orig_shape)
+        q_state = Rotation.from_quat(state_quat_expanded.reshape(-1, 4))
+        q_actions = Rotation.from_quat(actions_quat.reshape(-1, 4))
+        dq = q_actions * q_state.inv()
+        delta_quat = dq.as_quat()
+        mask = delta_quat[..., 3] < 0
+        delta_quat[mask] *= -1
+        actions[..., 3:7] = delta_quat.reshape(orig_shape)
         data["actions"] = actions
 
         return data
@@ -241,6 +275,35 @@ class AbsoluteActions(DataTransformFn):
         actions[..., :dims] += np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
         data["actions"] = actions
 
+        return data
+
+@dataclasses.dataclass(frozen=True)
+class AbsoluteActionsQuat(DataTransformFn):
+    """Repacks delta actions into absolute action space for quaternions."""
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if "actions" not in data or "state" not in data:
+            return data
+
+        state, actions = data["state"], data["actions"]
+        actions[..., :3] = actions[..., :3] + state[..., None, :3]
+        state_quat = state[..., 3:7]
+        delta_quat_raw = actions[..., 3:7]
+        orig_shape = delta_quat_raw.shape
+        delta_quat_flat = delta_quat_raw.reshape(-1, 4)
+        norm = np.linalg.norm(delta_quat_flat, axis=-1, keepdims=True)
+        delta_quat_flat /= norm
+        sign_mask = delta_quat_flat[..., 3] < 0
+        delta_quat_flat[sign_mask] *= -1
+        state_quat_expanded = np.expand_dims(state_quat, axis=-2)
+        state_quat_expanded = np.broadcast_to(state_quat_expanded, orig_shape)
+        q_state = Rotation.from_quat(state_quat_expanded.reshape(-1, 4))
+        dq = Rotation.from_quat(delta_quat_flat)
+        q_final = q_state * dq
+        quat_output = q_final.as_quat()
+        actions[..., 3:7] = quat_output.reshape(orig_shape)
+        data["actions"] = actions
+        
         return data
 
 
