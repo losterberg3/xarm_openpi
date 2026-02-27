@@ -482,6 +482,7 @@ class LeRobotXarmDataConfig(DataConfigFactory):
             outputs=[xarm_policy.XarmOutputs(model_type=model_config.model_type)],
         )
         
+        # in case you are not using quaternions
         #delta_action_mask = _transforms.make_bool_mask(7, -1)
         #data_transforms = data_transforms.push(
         #    inputs=[_transforms.DeltaActions(delta_action_mask)],
@@ -1058,7 +1059,7 @@ _CONFIGS = [
         ema_decay=None,
         num_train_steps=30_000,
         save_interval=1_000,
-        overwrite=True, #keep track of this for storage issues
+        resume=True,
         batch_size=16,
         wandb_enabled=True,
     ),

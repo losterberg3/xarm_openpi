@@ -11,10 +11,11 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-FPS = 3.0
+FPS = 20.0
 DT = 1.0 / FPS # your timestep
 CONTROL_HZ = 40.0 # keep as a multiple of 10
-ACTION_ROLLOUT = 10
+ACTION_ROLLOUT = 20
+MAX_STEP_XYZ = 5.0
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
@@ -99,38 +100,30 @@ while True:
 
     for count in range(ACTION_ROLLOUT):
         t0 = time.perf_counter()
+
+        _, actual_pose = arm.get_position()
+        current_xyz = np.array(actual_pose[:3])
+        current_euler = np.array(actual_pose[3:6])
         
         target_xyz = action[count, :3]
         raw_quat = action[count, 3:7]
 
-        # 2. Normalize and Fix Double Cover (The "Wrong Direction" fix)
-        target_quat = raw_quat / np.linalg.norm(raw_quat)
-        if np.dot(target_quat, ref_quat) < 0:
-            target_quat = -target_quat # Flip quat to stay in the same hemisphere
+        diff_xyz = target_xyz - current_xyz
+        dist_xyz = np.linalg.norm(diff_xyz)
+        
+        # If the jump is too big, scale it down to MAX_STEP
+        if dist_xyz > MAX_STEP_XYZ:
+            target_xyz = current_xyz + (diff_xyz / dist_xyz) * MAX_STEP_XYZ
         
         # 3. Convert to Euler
-        target_euler = Rotation.from_quat(target_quat).as_euler('xyz', degrees=True)
-
-        # 4. Clamp Pitch (Singularity protection)
-        if abs(target_euler[1]) > 88.0:
-            target_euler[1] = np.sign(target_euler[1]) * 88.0
-
-        # 5. YOUR SMOOTHING (Now properly updating the command)
-        if count == 0:
-            dist = np.linalg.norm(target_xyz - current_pos)
-            if dist > 20: 
-                print(f"Warning: Large jump detected ({dist:.2f}mm). Smoothing...")
-                target_xyz = current_pos + (target_xyz - current_pos) * 0.2
+        target_euler = Rotation.from_quat(raw_quat).as_euler('xyz', degrees=True)
 
         # 6. RECONSTRUCT CMD_POSE (Crucial step you caught earlier)
         cmd_pose = np.concatenate([target_xyz, target_euler])
 
         # 7. Execute
         print(f"Executing: {cmd_pose}")
-        arm.set_servo_cartesian(cmd_pose, speed=20, mvacc=500)
-
-        # Update ref_quat so the next step in the chunk stays consistent
-        ref_quat = target_quat
+        arm.set_servo_cartesian(cmd_pose, speed=20, mvacc=1)
 
         # Gripper & Timing
         cmd_gripper_pose = (action[count, 7]) * -860 + 850 
