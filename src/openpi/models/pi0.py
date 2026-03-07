@@ -12,6 +12,7 @@ from openpi.models import model as _model
 from openpi.models import pi0_config
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
+import openpi.models.gru as _gru
 from openpi.shared import array_typing as at
 from openpi.models.tokenizer import PaligemmaTokenizer
 
@@ -102,19 +103,30 @@ class Pi0(_model.BaseModel):
             self.action_time_mlp_out = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
         self.action_out_proj = nnx.Linear(action_expert_config.width, config.action_dim, rngs=rngs)
 
+        # GRU init
+        self.memory_gru = nnx.GRUCell(
+            in_features=2048, 
+            hidden_features=2048, 
+            rngs=rngs,
+            param_dtype=config.dtype
+        )
+
         # This attribute gets automatically set by model.train() and model.eval().
         self.deterministic = True
 
     @at.typecheck
     def embed_prefix(
-        self, obs: _model.Observation
-    ) -> tuple[at.Float[at.Array, "b s emb"], at.Bool[at.Array, "b s"], at.Bool[at.Array, " s"]]:
+        self, obs: _model.Observation, history: at.Array
+    ) -> tuple[at.Float[at.Array, "b s emb"], at.Bool[at.Array, "b s"], at.Bool[at.Array, " s"], at.Float[at.Array, "b s emb"]]:
         input_mask = []
         ar_mask = []
         tokens = []
+        updated_history = history
         # embed images
         for name in obs.images:
             image_tokens, _ = self.PaliGemma.img(obs.images[name], train=False)
+            if name == 'base_0_rgb' and history is not None:
+                updated_history, image_tokens = self.memory_gru(history, image_tokens)
 
             tokens.append(image_tokens)
             input_mask.append(
@@ -137,7 +149,8 @@ class Pi0(_model.BaseModel):
         tokens = jnp.concatenate(tokens, axis=1)
         input_mask = jnp.concatenate(input_mask, axis=1)
         ar_mask = jnp.array(ar_mask)
-        return tokens, input_mask, ar_mask
+
+        return tokens, input_mask, ar_mask, updated_history
 
     @at.typecheck
     def embed_suffix(
@@ -196,6 +209,7 @@ class Pi0(_model.BaseModel):
         observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
 
         batch_shape = actions.shape[:-2]
+
         noise = jax.random.normal(noise_rng, actions.shape)
         time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
         time_expanded = time[..., None, None]
@@ -203,7 +217,7 @@ class Pi0(_model.BaseModel):
         u_t = noise - actions
 
         # one big forward pass of prefix + suffix at once
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_tokens, prefix_mask, prefix_ar_mask, updated_history = self.embed_prefix(observation, init_history)
         suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, time)
         input_mask = jnp.concatenate([prefix_mask, suffix_mask], axis=1)
         ar_mask = jnp.concatenate([prefix_ar_mask, suffix_ar_mask], axis=0)
@@ -217,14 +231,60 @@ class Pi0(_model.BaseModel):
         return jnp.mean(jnp.square(v_t - u_t), axis=-1)
 
     @override
+    def compute_loss_gru(
+        self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, image_tokens: at.Array, *, train: bool = False
+    ) -> at.Float[at.Array, "*b ah"]:
+        preprocess_rng, noise_rng, time_rng, scan_rng = jax.random.split(rng, 4)
+        observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
+
+        batch_shape = actions.shape[:-2]
+
+        def scan_step(carry_history, inputs):
+            tokens, scan_rng = inputs
+
+            # we add noise to history for robustness
+            noise = jax.random.normal(scan_rng, carry_history.shape) * 0.005
+            updated_history, _ = self.memory_gru(carry_history + noise, tokens)
+            return updated_history, None
+
+        updated_history = None
+        if image_tokens is not None:
+            history = image_tokens[0]
+            remaining_tokens = image_tokens[1:]
+            scan_keys = jax.random.split(scan_rng, remaining_tokens.shape[0])
+            # remaining tokens are t, b, 256, d, lax scan iterates through t, output is b, 256, d
+            updated_history, _ = jax.lax.scan(scan_step, history, (remaining_tokens, scan_keys))
+
+        noise = jax.random.normal(noise_rng, actions.shape)
+        time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
+        time_expanded = time[..., None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        # one big forward pass of prefix + suffix at once
+        prefix_tokens, prefix_mask, prefix_ar_mask, _ = self.embed_prefix(observation, updated_history)
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, time)
+        input_mask = jnp.concatenate([prefix_mask, suffix_mask], axis=1)
+        ar_mask = jnp.concatenate([prefix_ar_mask, suffix_ar_mask], axis=0)
+        attn_mask = make_attn_mask(input_mask, ar_mask)
+        positions = jnp.cumsum(input_mask, axis=1) - 1
+        (prefix_out, suffix_out), _ = self.PaliGemma.llm(
+            [prefix_tokens, suffix_tokens], mask=attn_mask, positions=positions, adarms_cond=[None, adarms_cond]
+        )
+        v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+
+        return jnp.mean(jnp.square(v_t - u_t), axis=-1), v_t
+
+    @override
     def sample_actions(
         self,
         rng: at.KeyArrayLike,
         observation: _model.Observation,
+        history: at.Array,
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
-    ) -> tuple[_model.Actions, Any]:
+    ) -> tuple[_model.Actions, at.Array]:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
@@ -234,7 +294,7 @@ class Pi0(_model.BaseModel):
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
 
         # first fill KV cache with a forward pass of the prefix
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_tokens, prefix_mask, prefix_ar_mask, updated_history = self.embed_prefix(observation, history)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
         _, kv_cache = self.PaliGemma.llm([prefix_tokens, None], mask=prefix_attn_mask, positions=positions)
@@ -279,7 +339,7 @@ class Pi0(_model.BaseModel):
             return time >= -dt / 2
 
         x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
-        return x_0
+        return x_0, updated_history
 
     @override
     def sample_text(

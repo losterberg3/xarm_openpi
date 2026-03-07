@@ -98,7 +98,7 @@ class Policy(BasePolicy):
         if self._language_out:
             actions = self._sample_text(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         else:
-            actions = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            actions, history = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
         
         outputs = {
             "state": inputs["state"],

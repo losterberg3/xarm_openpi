@@ -10,7 +10,7 @@ from openpi.models.tokenizer import PaligemmaTokenizer
 
 
 base = True
-fast = True
+fast = False
 
 if base:
     if fast:
@@ -27,7 +27,7 @@ policy = policy_config.create_trained_policy(config, checkpoint_dir, language_ou
 # make sure to edit tokenizer.py if you want language to only include the prompt
 
 tokenizer = PaligemmaTokenizer()
-
+"""
 # Connect to cameras
 ctx = rs.context()
 devices = ctx.query_devices()
@@ -52,15 +52,15 @@ for serial in serials:
     pipeline.start(config)
     pipelines.append(pipeline)
     configs.append(config)
-
+"""
 def get_observation():
-    frames_wrist = pipelines[0].wait_for_frames()
+    #frames_wrist = pipelines[0].wait_for_frames()
     #frames_exterior = pipelines[1].wait_for_frames()
 
-    wrist = frames_wrist.get_color_frame()
+    #wrist = frames_wrist.get_color_frame()
     #exterior = frames_exterior.get_color_frame()
 
-    a = np.asanyarray(wrist.get_data())
+    a = np.zeros((3, 640, 480)) #np.asanyarray(wrist.get_data())
     #b = np.asanyarray(exterior.get_data())
     b = a
     # use norm stats for state, this doesn't end up going anywhere
