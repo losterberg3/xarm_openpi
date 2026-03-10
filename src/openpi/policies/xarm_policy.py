@@ -78,11 +78,11 @@ class XarmInputs(transforms.DataTransformFn):
 class XarmOutputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
-    def __call__(self, data: dict) -> dict:
-        if self.model_type is _model.ModelType.PI0_FAST:
-            return {"actions": np.asarray(data["actions"][:])}
-                
-        return {"actions": np.asarray(data["actions"][:, :7])}
+    def __call__(self, data: dict) -> dict:        
+        return {"latents": np.asarray(data["latents"]),
+                "actions": np.asarray(data["actions"][:, :7])}
+
+
              
         
         

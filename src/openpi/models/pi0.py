@@ -341,6 +341,17 @@ class Pi0(_model.BaseModel):
         x_0, _ = jax.lax.while_loop(cond, step, (noise, 1.0))
         return x_0, updated_history
 
+    @at.typecheck
+    def get_latents(
+        self, obs: _model.Observation
+    ) -> at.Float[at.Array, "b s emb"]:
+        # embed images
+        for name in obs.images:
+            if name == 'base_0_rgb':
+                tokens, _ = self.PaliGemma.img(obs.images[name], train=False)
+
+        return tokens
+
     @override
     def sample_text(
         self,

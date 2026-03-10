@@ -476,7 +476,7 @@ class LeRobotXarmDataConfig(DataConfigFactory):
                 )
             ]
         )
-        # We assume joint *velocity* actions, so we should *not* apply an additional delta transform.
+
         data_transforms = _transforms.Group(
             inputs=[xarm_policy.XarmInputs(model_type=model_config.model_type)],
             outputs=[xarm_policy.XarmOutputs(model_type=model_config.model_type)],
@@ -703,7 +703,7 @@ _CONFIGS = [
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
                 #assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                asset_id="lars/xarm_demos_eef", # for norm stats (inference and training)
+                asset_id="lars/xarm_history_exp_v1", # for norm stats (inference and training)
             ),
         ),
     ),
@@ -1013,6 +1013,50 @@ _CONFIGS = [
     #
     # Fine-tuning xarm configs
     #
+    TrainConfig(
+        # This config is for fine-tuning pi05-Xarm on a custom Xarm dataset.
+        # Here, we use LeRobot data format (like for all other fine-tuning examples)
+        name="pi05_gru_addition",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora", 
+            action_expert_variant="gemma_300m_lora"
+        ),
+        data=LeRobotXarmDataConfig(
+            # Replace with your custom Xarm LeRobot dataset repo id.
+            repo_id="lars/xarm_history_exp_v1",  # change this
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_gru_addition
+                # Then possibly use those norm stats and change below
+                assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
+                asset_id="lars/xarm_history_exp_v1",
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_history_exp_v1/25000"), #check this
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=8_000,
+            peak_lr=5e-5,
+            decay_steps=30_000,
+            decay_lr=5e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            paligemma_variant="gemma_2b_lora", 
+            action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        num_train_steps=30_000,
+        save_interval=1_000,
+        overwrite=False, #keep track of this for storage issues
+        batch_size=16,
+        wandb_enabled=True,
+    ),
     TrainConfig(
         # This config is for fine-tuning pi05-Xarm on a custom Xarm dataset.
         # Here, we use LeRobot data format (like for all other fine-tuning examples)
