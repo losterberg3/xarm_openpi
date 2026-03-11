@@ -127,6 +127,8 @@ class Pi0(_model.BaseModel):
             image_tokens, _ = self.PaliGemma.img(obs.images[name], train=False)
             if name == 'base_0_rgb' and history is not None:
                 updated_history, image_tokens = self.memory_gru(history, image_tokens)
+            elif name == 'base_0_rgb':
+                updated_history = image_tokens
 
             tokens.append(image_tokens)
             input_mask.append(
@@ -217,7 +219,7 @@ class Pi0(_model.BaseModel):
         u_t = noise - actions
 
         # one big forward pass of prefix + suffix at once
-        prefix_tokens, prefix_mask, prefix_ar_mask, updated_history = self.embed_prefix(observation, init_history)
+        prefix_tokens, prefix_mask, prefix_ar_mask, _ = self.embed_prefix(observation, None)
         suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, time)
         input_mask = jnp.concatenate([prefix_mask, suffix_mask], axis=1)
         ar_mask = jnp.concatenate([prefix_ar_mask, suffix_ar_mask], axis=0)
@@ -233,7 +235,7 @@ class Pi0(_model.BaseModel):
     @override
     def compute_loss_gru(
         self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, image_tokens: at.Array, *, train: bool = False
-    ) -> at.Float[at.Array, "*b ah"]:
+    ) -> tuple[at.Float[at.Array, "*b ah"], at.Float[at.Array, "*b ah ad"]]:
         preprocess_rng, noise_rng, time_rng, scan_rng = jax.random.split(rng, 4)
         observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
 

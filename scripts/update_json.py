@@ -26,6 +26,11 @@ def update_metadata():
             "dtype": "int64",
             "shape": [1],
             "names": None
+        },
+        "image_latent": {
+            "dtype": "float32", 
+            "shape": [256, 2048], 
+            "names": None
         }
     }
 

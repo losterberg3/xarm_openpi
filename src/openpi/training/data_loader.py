@@ -126,6 +126,57 @@ class FakeDataset(Dataset):
     def __len__(self) -> int:
         return self._num_samples
 
+class RandomHistoryDataset(torch.utils.data.Dataset):
+    def __init__(self, base_dataset, batch_size, window_size=5):
+        self.base = base_dataset
+        self.window_size = window_size
+        self.batch_size = batch_size
+        self.half = batch_size // 2
+        self.hf_dataset = base_dataset.dataset.hf_dataset
+        # Reach into the stack to get the raw HuggingFace dataset
+        all_pos = np.where(np.array(self.hf_dataset["is_decision"]) == 1)[0]
+        all_neg = np.where(np.array(self.hf_dataset["is_decision"]) == 0)[0]
+        self.hf_dataset = base_dataset.dataset.hf_dataset
+        self.pos_indices = [
+            idx for idx in all_pos 
+            if self.hf_dataset[int(idx)]["index"] >= self.window_size
+        ]
+        self.neg_indices = [
+            idx for idx in all_neg 
+            if self.hf_dataset[int(idx)]["index"] >= self.window_size
+        ]
+        self.pos_indices = np.array(self.pos_indices)
+        self.neg_indices = np.array(self.neg_indices)
+        logging.info(f"Initialized GRU Dataset: {len(self.pos_indices)} positive, {len(self.neg_indices)} negative samples.")
+
+    def __len__(self):
+        return len(self.base)
+
+    def _get_frame_with_history(self, idx, is_decision):
+        obs, action = self.base[idx]
+        frame_in_ep = self.hf_dataset[idx]["index"]
+        start_of_ep = idx - frame_in_ep
+        past_indices = np.arange(start_of_ep, idx)
+    
+        sig_values = np.array(self.hf_dataset[past_indices]["significance"])
+        target_val = 1 if is_decision else 0
+        valid_pool = past_indices[sig_values == target_val]
+        selected = np.random.choice(valid_pool, self.window_size, replace=True)
+        selected.sort()
+        latents = np.array([self.hf_dataset[int(i)]["image_latent"] for i in selected])
+        
+        return {**obs, "actions": action, "latents": latents}
+
+    def __getitem__(self, batch_idx):
+        slot_in_batch = batch_idx % self.batch_size
+        
+        if slot_in_batch < self.half:
+            idx = np.random.choice(self.pos_indices)
+            return self._get_frame_with_history(idx, is_decision=True)
+        else:
+            idx = np.random.choice(self.neg_indices)
+            return self._get_frame_with_history(idx, is_decision=False)
+
 
 def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
@@ -228,7 +279,7 @@ def create_data_loader(
     num_batches: int | None = None,
     skip_norm_stats: bool = False,
     framework: Literal["jax", "pytorch"] = "jax",
-) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
+) -> DataLoader[tuple[_model.Observation, _model.Actions, at.Array]]:
     """Create a data loader for training.
 
     Args:
@@ -258,6 +309,7 @@ def create_data_loader(
         model_config=config.model,
         action_horizon=config.model.action_horizon,
         batch_size=config.batch_size,
+        gru=config.model.gru,
         sharding=sharding,
         shuffle=shuffle,
         num_batches=num_batches,
@@ -274,6 +326,7 @@ def create_torch_data_loader(
     action_horizon: int,
     batch_size: int,
     *,
+    gru: bool = False,
     sharding: jax.sharding.Sharding | None = None,
     skip_norm_stats: bool = False,
     shuffle: bool = False,
@@ -281,7 +334,7 @@ def create_torch_data_loader(
     num_workers: int = 0,
     seed: int = 0,
     framework: str = "jax",
-) -> DataLoader[tuple[_model.Observation, _model.Actions]]:
+) -> DataLoader[tuple[_model.Observation, _model.Actions, at.Array]]:
     """Create a data loader for training.
 
     Args:
@@ -301,6 +354,11 @@ def create_torch_data_loader(
     """
     dataset = create_torch_dataset(data_config, action_horizon, model_config)
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
+
+    if gru:
+        logging.info("Wrapping dataset with RandomHistoryDataset for GRU training.")
+        dataset = RandomHistoryDataset(dataset, window_size=10)
+        shuffle = False
 
     # Use TorchDataLoader for both frameworks
     # For PyTorch DDP, create DistributedSampler and divide batch size by world size
@@ -537,4 +595,7 @@ class DataLoaderImpl(DataLoader):
 
     def __iter__(self):
         for batch in self._data_loader:
-            yield _model.Observation.from_dict(batch), batch["actions"]
+            if "latents" in batch:
+                yield _model.Observation.from_dict(batch), batch["actions"], batch.get("latents")
+            else:
+                yield _model.Observation.from_dict(batch), batch["actions"]

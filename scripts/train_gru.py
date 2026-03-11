@@ -95,9 +95,23 @@ def init_train_state(
         # Merge the partial params into the model.
         if partial_params is not None:
             graphdef, state = nnx.split(model)
-            # This will produce an error if the partial params are not a subset of the state.
-            state.replace_by_pure_dict(partial_params)
+
+            # This is the "Additive Surgery" logic:
+            # We take the model's current state (which has the random GRU)
+            # and we only update the parts that exist in the checkpoint.
+            new_state = traverse_util.flatten_dict(state.to_pure_dict())
+            checkpoint_data = traverse_util.flatten_dict(partial_params)
+            
+            # Overwrite Pi0 weights with checkpoint weights
+            new_state.update(checkpoint_data)
+            
+            # Reconstruct and merge
+            state.replace_by_pure_dict(traverse_util.unflatten_dict(new_state))
             model = nnx.merge(graphdef, state)
+            
+            # This will produce an error if the partial params are not a subset of the state.
+            #state.replace_by_pure_dict(partial_params)
+            #model = nnx.merge(graphdef, state)
 
         params = nnx.state(model)
         # Convert frozen params to bfloat16.
@@ -138,7 +152,7 @@ def train_step(
     config: _config.TrainConfig,
     rng: at.KeyArrayLike,
     state: training_utils.TrainState,
-    batch: tuple[_model.Observation, _model.Actions, at.Array],
+    batch: tuple[_model.Observation, _model.Actions],
 ) -> tuple[training_utils.TrainState, dict[str, at.Array]]:
     model = nnx.merge(state.model_def, state.params)
     model.train()
@@ -147,7 +161,7 @@ def train_step(
     def loss_fn(
         model: _model.BaseModel, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions
     ):
-        chunked_loss, _ = model.compute_loss(rng, observation, actions, train=True)
+        chunked_loss = model.compute_loss(rng, observation, actions, train=True)
         return jnp.mean(chunked_loss)
 
     train_rng = jax.random.fold_in(rng, state.step)
@@ -209,10 +223,10 @@ def train_step_gru(
         pos_obs = jax.tree.map(lambda x: x[:half], observation)
         neg_obs = jax.tree.map(lambda x: x[half:], observation) 
 
-        pos_samples_loss, _ = model.compute_loss(rng, pos_obs, actions[:half], image_tokens[:half], train=True)
+        pos_samples_loss, _ = model.compute_loss_gru(rng, pos_obs, actions[:half], image_tokens[:half], train=True)
 
-        _, history_actions = model.compute_loss(rng, neg_obs, None, image_tokens[half:], train=False)
-        _, reflex_actions = model.compute_loss(rng, neg_obs, None, None, train=False)
+        _, history_actions = model.compute_loss_gru(rng, neg_obs, None, image_tokens[half:], train=False)
+        _, reflex_actions = model.compute_loss_gru(rng, neg_obs, None, None, train=False)
         neg_samples_loss = jnp.mean(jnp.square(history_actions - jax.lax.stop_gradient(reflex_actions)), axis=-1)
         # we treat the reflex actions as fixed parameters
         # we set train to false because we want no noise added to the images
@@ -329,7 +343,7 @@ def main(config: _config.TrainConfig):
     infos = []
     for step in pbar:
         with sharding.set_mesh(mesh):
-            train_state, info = ptrain_step(train_rng, train_state, batch)
+            train_state, info = ptrain_step_gru(train_rng, train_state, batch)
         infos.append(info)
         if step % config.log_interval == 0:
             stacked_infos = common_utils.stack_forest(infos)

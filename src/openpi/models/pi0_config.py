@@ -33,8 +33,7 @@ class Pi0Config(_model.BaseModelConfig):
     discrete_state_input: bool = None  # type: ignore
 
     # memory hyperparameters for GRU
-    use_memory: bool = False
-    memory_dim: int = 1152
+    gru: bool = False
 
     def __post_init__(self):
         if self.max_token_len is None:
@@ -107,6 +106,13 @@ class Pi0Config(_model.BaseModelConfig):
             filters.append(
                 nnx.Not(nnx_utils.PathRegex(".*lora.*")),
             )
-        if not filters:
-            return nnx.Nothing
-        return nnx.All(*filters)
+        #if not filters:
+            #return nnx.Nothing
+        original_logic = nnx.All(*filters) if filters else nnx.Nothing # same logic as before
+
+        if self.gru:
+            # Captures the vision tower (SigLIP) specifically
+            print("Training gru, freezing immage encoder.")
+            return nnx.Any(original_logic, nnx.PathRegex(".*PaliGemma/img.*"))
+
+        return original_logic

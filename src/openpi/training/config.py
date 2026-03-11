@@ -497,6 +497,53 @@ class LeRobotXarmDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
         )
 
+@dataclasses.dataclass(frozen=True)
+class LeRobotXarmDataConfigGRU(DataConfigFactory):
+    """
+    Example data config for custom Xarm dataset in LeRobot format, that includes parameters necessary for training the GRU.
+    """
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/exterior_image_1_left": "exterior_image_1_left",
+                        "observation/exterior_image_2_left": "exterior_image_2_left",
+                        "observation/wrist_image_left": "wrist_image_left",
+                        "observation/joint_position": "joint_position",
+                        "observation/gripper_position": "gripper_position",
+                        "image_latent": "image_latent",
+                        "significance": "significance",
+                        "is_decision": "is_decision",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[xarm_policy.XarmInputs(model_type=model_config.model_type)],
+            outputs=[xarm_policy.XarmOutputs(model_type=model_config.model_type)],
+        )
+        
+        delta_action_mask = _transforms.make_bool_mask(6, -1)
+        data_transforms = data_transforms.push(
+            inputs=[_transforms.DeltaActions(delta_action_mask)],
+            outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+        )
+        
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
@@ -1022,9 +1069,10 @@ _CONFIGS = [
             action_dim=32,
             action_horizon=50,
             paligemma_variant="gemma_2b_lora", 
-            action_expert_variant="gemma_300m_lora"
+            action_expert_variant="gemma_300m_lora",
+            gru=True
         ),
-        data=LeRobotXarmDataConfig(
+        data=LeRobotXarmDataConfigGRU(
             # Replace with your custom Xarm LeRobot dataset repo id.
             repo_id="lars/xarm_history_exp_v1",  # change this
             base_config=DataConfig(prompt_from_task=True),
@@ -1048,12 +1096,14 @@ _CONFIGS = [
             action_dim=32,
             action_horizon=50,
             paligemma_variant="gemma_2b_lora", 
-            action_expert_variant="gemma_300m_lora"
+            action_expert_variant="gemma_300m_lora",
+            gru=True
         ).get_freeze_filter(),
         ema_decay=None,
         num_train_steps=30_000,
         save_interval=1_000,
-        overwrite=False, #keep track of this for storage issues
+        overwrite=False, 
+        resume=False,
         batch_size=16,
         wandb_enabled=True,
     ),
@@ -1070,13 +1120,13 @@ _CONFIGS = [
         ),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            repo_id="lars/xarm_generalpickandplace",  # change this
+            repo_id="lars/xarm_history_exp_v1e",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
                 assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                asset_id="lars/xarm_generalpickandplace",
+                asset_id="lars/xarm_history_exp_v1",
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
