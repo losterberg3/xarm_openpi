@@ -118,6 +118,7 @@ class PaliGemmaWithExpertModel(nn.Module):
             prefix_output = prefix_output.last_hidden_state
             suffix_output = None
         elif inputs_embeds[0] is None:
+            want_attn = ATTENTION_STREAM_CALLBACK is not None and ATTENTION_STREAM_IMAGES is not None
             suffix_output = self.gemma_expert.model.forward(
                 inputs_embeds=inputs_embeds[1],
                 attention_mask=attention_mask,
@@ -125,7 +126,14 @@ class PaliGemmaWithExpertModel(nn.Module):
                 past_key_values=past_key_values,
                 use_cache=use_cache,
                 adarms_cond=adarms_cond[1] if adarms_cond is not None else None,
+                output_attentions=want_attn,
             )
+            if want_attn and getattr(suffix_output, "attentions", None) is not None:
+                try:
+                    attention_weights_by_layer = {i: a.detach() for i, a in enumerate(suffix_output.attentions)}
+                    ATTENTION_STREAM_CALLBACK(ATTENTION_STREAM_IMAGES, attention_weights_by_layer)
+                except Exception:
+                    pass
             suffix_output = suffix_output.last_hidden_state
             prefix_output = None
             prefix_past_key_values = None

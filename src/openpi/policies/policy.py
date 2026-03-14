@@ -132,7 +132,7 @@ class Policy(BasePolicy):
             history_out = outputs.pop("history", None)
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
             if history_out is not None:
-                outputs["history"] = np.asarray(history_out.detach().cpu())
+                outputs["history"] = np.asarray(history_out.detach().cpu().float())
         else:
             history_out = outputs.pop("history", None)
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)

@@ -755,6 +755,20 @@ _CONFIGS = [
         ),
     ),
     TrainConfig(
+        name="pi05_xarm_gru",
+        model=pi0_config.Pi0Config(action_horizon=50, pi05=True, gru=True),
+        data=LeRobotXarmDataConfig(
+            # Replace with your custom Xarm LeRobot dataset repo id.
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
+                # Then possibly use those norm stats and change below
+                assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
+                asset_id="lars/xarm_history_exp_v1", # for norm stats (inference and training)
+            ),
+        ),
+    ),
+    TrainConfig(
         name="pi05_xarm_FAST",
         model=pi0_fast.Pi0FASTConfig(),
         data=SimpleDataConfig(

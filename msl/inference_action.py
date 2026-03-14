@@ -28,7 +28,7 @@ config = _config.get_config("pi05_xarm")
 checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_abs_pos_2_6/20000")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
+policy = policy_config.create_trained_policy(config, checkpoint_dir)
 
 # Connect to cameras
 ctx = rs.context()

@@ -34,8 +34,8 @@ def create_trained_policy(
             kwargs will be used.
         default_prompt: The default prompt to use for the policy. Will inject the prompt into the input
             data if it doesn't already exist.
-        norm_stats: The norm stats to use for the policy. If not provided, the norm stats will be loaded
-            from the checkpoint directory.
+        norm_stats: The norm stats to use for the policy. If not provided, norm stats are loaded from the
+            training config assets first, then from the checkpoint assets if missing (e.g. converted PyTorch).
         pytorch_device: Device to use for PyTorch models (e.g., "cpu", "cuda", "cuda:0").
                       If None and is_pytorch=True, will use "cuda" if available, otherwise "cpu".
 
@@ -58,11 +58,11 @@ def create_trained_policy(
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
     if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
-        if data_config.asset_id is None:
-            raise ValueError("Asset id is required to load norm stats.")
-        norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)
+        # Prefer norm stats from the training config (same assets dir as training).
+        norm_stats = data_config.norm_stats
+        if norm_stats is None and data_config.asset_id is not None:
+            # Fall back to checkpoint assets (e.g. JAX checkpoints that saved them).
+            norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)
 
     # Determine the device to use for PyTorch models
     if is_pytorch and pytorch_device is None:

@@ -29,7 +29,7 @@ arm.set_gripper_mode(0)
 config = _config.get_config("pi05_xarm")
 checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/25000")
 
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
+policy = policy_config.create_trained_policy(config, checkpoint_dir)
 
 ctx = rs.context()
 devices = ctx.query_devices()

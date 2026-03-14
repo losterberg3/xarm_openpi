@@ -27,6 +27,58 @@ logger = logging.getLogger("openpi")
 ArrayT = TypeVar("ArrayT", bound=jax.Array | torch.Tensor | np.ndarray)
 
 
+def _remap_expert_layernorm_keys_if_needed(model, state_dict: dict) -> dict:
+    """Remap checkpoint keys from scale-only expert norms to dense (adaRMS) format.
+
+    Checkpoints saved with conversion's non-pi05 branch have
+    *.input_layernorm.weight, *.post_attention_layernorm.weight, *.norm.weight.
+    The Pi05 model expects *.input_layernorm.dense.{weight,bias}, etc.
+    This converts scale-only keys into .dense.* so loading succeeds.
+    """
+    prefix = "paligemma_with_expert.gemma_expert.model."
+    sample_scale_key = f"{prefix}layers.0.input_layernorm.weight"
+    if sample_scale_key not in state_dict:
+        return state_dict
+
+    expert = model.paligemma_with_expert.gemma_expert.model
+    cond_dim = expert.layers[0].input_layernorm.dense.weight.shape[1]
+    first_tensor = next(iter(state_dict.values()))
+    device = first_tensor.device
+    dtype = first_tensor.dtype
+
+    out = dict(state_dict)
+    dim = None
+
+    for key in list(out.keys()):
+        if not key.startswith(prefix) or not key.endswith(".weight"):
+            continue
+        if ".dense." in key or "self_attn." in key or "mlp." in key:
+            continue
+        # key is like ...layers.i.input_layernorm.weight or ...norm.weight
+        if ".input_layernorm.weight" in key:
+            suffix = ".input_layernorm.weight"
+            dense_prefix = key[: -len(suffix)] + ".input_layernorm.dense"
+        elif ".post_attention_layernorm.weight" in key:
+            suffix = ".post_attention_layernorm.weight"
+            dense_prefix = key[: -len(suffix)] + ".post_attention_layernorm.dense"
+        elif key == f"{prefix}norm.weight":
+            dense_prefix = f"{prefix}norm.dense"
+        else:
+            continue
+
+        scale = out.pop(key)
+        if dim is None:
+            dim = scale.shape[0]
+        out[f"{dense_prefix}.bias"] = torch.cat(
+            [scale.to(dtype), torch.zeros(2 * dim, device=device, dtype=dtype)]
+        )
+        out[f"{dense_prefix}.weight"] = torch.zeros(
+            dim * 3, cond_dim, device=device, dtype=dtype
+        )
+
+    return out
+
+
 class ModelType(enum.Enum):
     """Supported model types."""
 
@@ -246,7 +298,17 @@ class BaseModelConfig(abc.ABC):
     def load_pytorch(self, train_config, weight_path: str):
         logger.info(f"train_config: {train_config}")
         model = pi0_pytorch.PI0Pytorch(config=train_config.model)
-        safetensors.torch.load_model(model, weight_path)
+        state_dict = safetensors.torch.load_file(weight_path)
+        state_dict = _remap_expert_layernorm_keys_if_needed(model, state_dict)
+        load_result = model.load_state_dict(state_dict, strict=False)
+        if load_result.missing_keys:
+            logger.warning(
+                "Checkpoint is missing keys (using initial weights for these): %s. "
+                "If embed_tokens is missing, re-run conversion from a full JAX checkpoint that includes PaliGemma.",
+                load_result.missing_keys,
+            )
+        if load_result.unexpected_keys:
+            logger.warning("Checkpoint has unexpected keys (ignored): %s", load_result.unexpected_keys)
         return model
 
     @abc.abstractmethod

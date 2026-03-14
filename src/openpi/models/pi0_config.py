@@ -112,7 +112,7 @@ class Pi0Config(_model.BaseModelConfig):
 
         if self.gru:
             # Captures the vision tower (SigLIP) specifically
-            print("Training gru, freezing immage encoder.")
+            print("GRU is enabled.")
             return nnx.Any(original_logic, nnx_utils.PathRegex(".*PaliGemma/img.*"))
 
         return original_logic

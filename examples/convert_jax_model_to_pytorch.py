@@ -176,10 +176,12 @@ def slice_paligemma_state_dict(state_dict, config):
     pytorch_key = "paligemma_with_expert.paligemma.model.multi_modal_projector.linear.bias"
     state_dict[pytorch_key] = state_dict.pop(jax_key)
 
-    # text decoder (gemma)
-    jax_key = f"llm/embedder/input_embedding{suffix}"
+    # text decoder (gemma) — try expected key; fallback in convert_pi0_checkpoint adds from full params if missing
     pytorch_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
-    state_dict[pytorch_key] = state_dict.pop(jax_key)
+    for jax_key in (f"llm/embedder/input_embedding{suffix}", "llm/embedder/input_embedding"):
+        if jax_key in state_dict:
+            state_dict[pytorch_key] = state_dict.pop(jax_key)
+            break
 
     # pop the einsum attention + mlp representations
     llm_attention_attn_vec_einsum = state_dict.pop(f"llm/layers/attn/attn_vec_einsum/w{suffix}")
@@ -548,13 +550,33 @@ def convert_pi0_checkpoint(
     # Process PaliGemma weights
     paligemma_params, expert_params = slice_paligemma_state_dict(initial_params["paligemma_params"], paligemma_config)
 
+    # Ensure language embed_tokens is present (flatten_mapping can miss it in some checkpoint layouts)
+    embed_tokens_key = "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+    if embed_tokens_key not in paligemma_params:
+        full_params = initial_params["projection_params"]
+        try:
+            arr = np.array(
+                _param_value(full_params["PaliGemma"]["llm"]["embedder"]["input_embedding"])
+            )
+            paligemma_params[embed_tokens_key] = torch.from_numpy(arr)
+            print("Restored embed_tokens from full params (was missing from flattened PaliGemma).")
+        except KeyError as e:
+            raise KeyError(
+                f"Language model embed_tokens not found in checkpoint (tried flattened dict and "
+                f"full params PaliGemma.llm.embedder.input_embedding). {e}"
+            ) from e
+
     # Process Gemma weights from expert_params
     gemma_params = slice_gemma_state_dict(
         expert_params, action_expert_config, num_expert=1, checkpoint_dir=checkpoint_dir, pi05=model_config.pi05
     )
 
-    # Instantiate model
-    pi0_model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_config)
+    # Instantiate model (skip transformers_replace check; we only need the structure to load weights)
+    os.environ["OPENPI_SKIP_TRANSFORMERS_CHECK"] = "1"
+    try:
+        pi0_model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_config)
+    finally:
+        os.environ.pop("OPENPI_SKIP_TRANSFORMERS_CHECK", None)
 
     # Combine all parameters (no prefix needed for our model structure)
     all_params = {**paligemma_params, **gemma_params, **projection_params}
@@ -571,9 +593,15 @@ def convert_pi0_checkpoint(
 
     # Save the converted model using safetensors
     os.makedirs(output_path, exist_ok=True)
+    out_path = os.path.join(output_path, "model.safetensors")
 
-    # Save model weights as SafeTensors using save_model to handle tied weights
-    safetensors.torch.save_model(pi0_model, os.path.join(output_path, "model.safetensors"))
+    # Save state: model state_dict plus any all_params keys that didn't load (e.g. embed_tokens).
+    # save_model() only writes model.state_dict(), so keys that were "unexpected" would be missing.
+    state_to_save = dict(pi0_model.state_dict())
+    state_to_save.update(all_params)
+    # Safetensors requires contiguous tensors; clone to avoid views/transposes.
+    state_to_save = {k: v.contiguous().clone() for k, v in state_to_save.items()}
+    safetensors.torch.save_file(state_to_save, out_path)
 
     # Copy assets folder if it exists
     assets_source = pathlib.Path(checkpoint_dir).parent / "assets"
