@@ -108,7 +108,9 @@ class Pi0(_model.BaseModel):
             in_features=2048, 
             hidden_features=2048, 
             rngs=rngs,
-            param_dtype=config.dtype
+            # Use float32 params for GRU init: GRUCell uses orthogonal init (QR / geqrf)
+            # which isn't supported for bfloat16 on some backends.
+            param_dtype=jnp.float32
         )
 
         # This attribute gets automatically set by model.train() and model.eval().
@@ -117,7 +119,12 @@ class Pi0(_model.BaseModel):
     @at.typecheck
     def embed_prefix(
         self, obs: _model.Observation, history: at.Array
-    ) -> tuple[at.Float[at.Array, "b s emb"], at.Bool[at.Array, "b s"], at.Bool[at.Array, " s"], at.Float[at.Array, "b s emb"]]:
+    ) -> tuple[
+        at.Float[at.Array, "b s emb"],
+        at.Bool[at.Array, "b s"],
+        at.Bool[at.Array, " s"],
+        at.Float[at.Array, "b tok emb"],
+    ]:
         input_mask = []
         ar_mask = []
         tokens = []

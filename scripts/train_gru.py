@@ -73,12 +73,46 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, log_code: bool = 
 def _load_weights_and_validate(loader: _weight_loaders.WeightLoader, params_shape: at.Params) -> at.Params:
     """Loads and validates the weights. Returns a loaded subset of the weights."""
     loaded_params = loader.load(params_shape)
-    at.check_pytree_equality(expected=params_shape, got=loaded_params, check_shapes=True, check_dtypes=True)
+    # When adding new modules (e.g. GRU), checkpoints won't contain those new params.
+    # We validate only the overlapping subtree and return just the overlapping params so init() can merge additively.
+    expected_flat = traverse_util.flatten_dict(params_shape)
+    got_flat = traverse_util.flatten_dict(loaded_params)
 
-    # Remove jax.ShapeDtypeStruct from the loaded params. This makes sure that only the loaded params are returned.
-    return traverse_util.unflatten_dict(
-        {k: v for k, v in traverse_util.flatten_dict(loaded_params).items() if not isinstance(v, jax.ShapeDtypeStruct)}
+    # Filter to only leaves that are actually loaded (exclude ShapeDtypeStruct placeholders).
+    got_flat = {k: v for k, v in got_flat.items() if not isinstance(v, jax.ShapeDtypeStruct)}
+
+    # Keep only keys that exist in the current model params.
+    overlap = {k: v for k, v in got_flat.items() if k in expected_flat}
+    missing_in_model = sorted(set(got_flat) - set(expected_flat))
+    if missing_in_model:
+        logging.warning(
+            "Checkpoint has %d params not present in current model (e.g. renamed modules). "
+            "They will be ignored. Example: %s",
+            len(missing_in_model),
+            missing_in_model[:3],
+        )
+
+    # Validate shapes/dtypes for overlap only.
+    for k, v in overlap.items():
+        exp = expected_flat[k]
+        try:
+            if hasattr(exp, "shape") and hasattr(v, "shape") and exp.shape != v.shape:
+                raise ValueError(f"Shape mismatch at {k}: expected {exp.shape}, got {v.shape}")
+            if hasattr(exp, "dtype") and hasattr(v, "dtype") and exp.dtype != v.dtype:
+                raise ValueError(f"Dtype mismatch at {k}: expected {exp.dtype}, got {v.dtype}")
+        except Exception as e:
+            raise ValueError(f"Checkpoint param mismatch at {k}: {e}") from e
+
+    dropped = len(got_flat) - len(overlap)
+    added = len(expected_flat) - len(overlap)
+    logging.info(
+        "Loaded checkpoint params: %d matched, %d ignored, %d new params initialized from scratch.",
+        len(overlap),
+        dropped,
+        added,
     )
+
+    return traverse_util.unflatten_dict(overlap)
 
 
 @at.typecheck
@@ -223,10 +257,18 @@ def train_step_gru(
         pos_obs = jax.tree.map(lambda x: x[:half], observation)
         neg_obs = jax.tree.map(lambda x: x[half:], observation) 
 
-        pos_samples_loss, _ = model.compute_loss_gru(rng, pos_obs, actions[:half], image_tokens[:half], train=True)
+        # Data loader provides latents as (b, t, 256, d). Model expects (t, b, 256, d) for lax.scan.
+        pos_tokens = jnp.swapaxes(image_tokens[:half], 0, 1)
+        neg_tokens = jnp.swapaxes(image_tokens[half:], 0, 1)
 
-        _, history_actions = model.compute_loss_gru(rng, neg_obs, None, image_tokens[half:], train=False)
-        _, reflex_actions = model.compute_loss_gru(rng, neg_obs, None, None, train=False)
+        # Disable strict jaxtyping checks inside GRU loss; we intentionally pass history=None
+        # for the reflex branch, and the current type hints don't express Optional correctly.
+        with at.disable_typechecking():
+            pos_samples_loss, _ = model.compute_loss_gru(rng, pos_obs, actions[:half], pos_tokens, train=True)
+
+            # For negatives, we only care about v_t, but compute_loss_gru still needs valid actions.
+            _, history_actions = model.compute_loss_gru(rng, neg_obs, actions[half:], neg_tokens, train=False)
+            _, reflex_actions = model.compute_loss_gru(rng, neg_obs, actions[half:], None, train=False)
         neg_samples_loss = jnp.mean(jnp.square(history_actions - jax.lax.stop_gradient(reflex_actions)), axis=-1)
         # we treat the reflex actions as fixed parameters
         # we set train to false because we want no noise added to the images
@@ -343,7 +385,7 @@ def main(config: _config.TrainConfig):
     infos = []
     for step in pbar:
         with sharding.set_mesh(mesh):
-            train_state, info = ptrain_step_gru(train_rng, train_state, batch)
+            train_state, info = ptrain_step(train_rng, train_state, batch)
         infos.append(info)
         if step % config.log_interval == 0:
             stacked_infos = common_utils.stack_forest(infos)

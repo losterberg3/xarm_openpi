@@ -70,7 +70,9 @@ class Policy(BasePolicy):
             self._rng = rng or jax.random.key(0)
 
     @override
-    def infer(self, obs: dict, history: np.ndarray, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+    def infer(
+        self, obs: dict, history: np.ndarray | None = None, *, noise: np.ndarray | None = None
+    ) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
         inputs = self._input_transform(inputs)
@@ -92,6 +94,12 @@ class Policy(BasePolicy):
                 noise = noise[None, ...]  # Make it (1, action_horizon, action_dim)
             sample_kwargs["noise"] = noise
 
+        if self._is_pytorch_model and history is not None:
+            h = np.asarray(history)
+            if h.ndim == 1:
+                h = h[None, :]
+            sample_kwargs["history"] = torch.from_numpy(h).to(self._pytorch_device)
+
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
 
@@ -100,18 +108,36 @@ class Policy(BasePolicy):
         if self._latents_out:
             latents = self._get_latents(observation)
         else:
-            actions, history = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
-        
+            if self._is_pytorch_model:
+                result = self._sample_actions(sample_rng_or_pytorch_device, observation, **sample_kwargs)
+            else:
+                result = self._sample_actions(
+                    sample_rng_or_pytorch_device, observation, history, **sample_kwargs
+                )
+            if isinstance(result, tuple) and len(result) == 2:
+                actions, history = result
+            else:
+                actions = result
+                history = None
+
         outputs = {
             "state": inputs["state"],
             "actions": actions,
             "latents": latents,
         }
+        if history is not None:
+            outputs["history"] = history
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:
+            history_out = outputs.pop("history", None)
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
+            if history_out is not None:
+                outputs["history"] = np.asarray(history_out.detach().cpu())
         else:
+            history_out = outputs.pop("history", None)
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
+            if history_out is not None:
+                outputs["history"] = np.asarray(history_out)
 
         outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {

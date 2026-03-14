@@ -1083,7 +1083,8 @@ _CONFIGS = [
                 asset_id="lars/xarm_history_exp_v1",
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_history_exp_v1/25000"), #check this
+        # Orbax params live under the step directory in a `params/` subdir.
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_history_exp_v1/25000/params"), #check this
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=8_000,
             peak_lr=5e-5,
@@ -1100,7 +1101,7 @@ _CONFIGS = [
             gru=True
         ).get_freeze_filter(),
         ema_decay=None,
-        num_train_steps=30_000,
+        num_train_steps=15_000,
         save_interval=1_000,
         overwrite=False, 
         resume=False,

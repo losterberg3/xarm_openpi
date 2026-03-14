@@ -1,3 +1,7 @@
+import argparse
+import os
+import sys
+import threading
 import numpy as np
 import pyrealsense2 as rs
 from xarm.wrapper import XArmAPI
@@ -13,6 +17,16 @@ FPS = 20.0
 DT = 1.0 / FPS # your timestep
 CONTROL_HZ = 40.0 # keep as a multiple of 10
 ACTION_ROLLOUT = 20
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--stream-attention",
+    action="store_true",
+    help="Stream attention to VLAExplain viewer (requires PyTorch model and VLAExplain repo). "
+    "Use PyTorch checkpoint (model.safetensors); see STREAMING.md.",
+)
+parser.add_argument("--attention-viewer-port", type=int, default=7863, help="Port for attention viewer (default 7863)")
+args, _ = parser.parse_known_args()
 
 arm = XArmAPI('192.168.1.219')
 if arm.get_state() != 0:
@@ -30,6 +44,43 @@ checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpo
 
 # Create a trained policy.
 policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
+
+# Optional: stream attention to VLAExplain (only works with PyTorch model)
+def _setup_attention_stream():
+    if not args.stream_attention:
+        return
+    is_pytorch = getattr(policy, "_is_pytorch_model", False)
+    if not is_pytorch:
+        print(
+            "Warning: --stream-attention requires a PyTorch checkpoint (model.safetensors). "
+            "Convert with: python examples/convert_jax_model_to_pytorch.py --checkpoint_dir <jax_ckpt> --output_path <out>"
+        )
+        return
+    vlaexplain_path = os.environ.get("VLAEXPLAIN_PATH")
+    if not vlaexplain_path or not os.path.isdir(vlaexplain_path):
+        # From openpi/msl/ -> ../../../ = repo parent (e.g. msl/), then VLAExplain
+        vlaexplain_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "VLAExplain")
+    if not os.path.isdir(vlaexplain_path):
+        vlaexplain_path = os.path.join(os.path.dirname(os.path.abspath(str(checkpoint_dir))), "..", "..", "..", "VLAExplain")
+    if os.path.isdir(vlaexplain_path) and vlaexplain_path not in sys.path:
+        sys.path.insert(0, vlaexplain_path)
+    try:
+        from stream_attention_viewer import push_attention, run_gradio_ui
+        import openpi.models_pytorch.gemma_pytorch as _gemma_mod
+        def _callback(images: dict, expert_attn: dict):
+            push_attention(
+                step=_gemma_mod.ATTENTION_STREAM_STEP,
+                raw_images={k: v for k, v in images.items() if k in ("image1", "image2")},
+                expert_attn=expert_attn,
+                time_step=0,
+            )
+        _gemma_mod.ATTENTION_STREAM_CALLBACK = _callback
+        threading.Thread(target=run_gradio_ui, kwargs={"port": args.attention_viewer_port}, daemon=True).start()
+        print(f"Attention streaming enabled. Open http://localhost:{args.attention_viewer_port}")
+    except ImportError as e:
+        print(f"Could not enable attention streaming: {e}. Install gradio and set VLAEXPLAIN_PATH to the VLAExplain repo.")
+
+_setup_attention_stream()
 
 # Connect to cameras
 ctx = rs.context()
@@ -99,12 +150,33 @@ def interpolate_action(state, goal):
         time_left = (1 / CONTROL_HZ) - (time.perf_counter() - start)
         time.sleep(max(time_left,0))
        
+_inference_step = 0
 while True:
 
     observation = get_observation()
 
+    # If attention streaming is enabled (PyTorch only), set current images and step for the model callback
+    if args.stream_attention and getattr(policy, "_is_pytorch_model", False):
+        try:
+            import openpi.models_pytorch.gemma_pytorch as _gemma_mod
+            if _gemma_mod.ATTENTION_STREAM_CALLBACK is not None:
+                a = observation.get("observation/exterior_image_1_left")
+                b = observation.get("observation/wrist_image_left")
+                if a is not None and b is not None:
+                    a = np.asarray(a)
+                    b = np.asarray(b)
+                    if a.ndim == 3 and a.shape[0] == 3:
+                        a = np.transpose(a, (1, 2, 0))
+                    if b.ndim == 3 and b.shape[0] == 3:
+                        b = np.transpose(b, (1, 2, 0))
+                    _gemma_mod.ATTENTION_STREAM_IMAGES = {"image1": a, "image2": b}
+                    _gemma_mod.ATTENTION_STREAM_STEP = _inference_step
+        except Exception:
+            pass
+
     print("Running inference")
     inference = policy.infer(observation)
+    _inference_step += 1
     
     action = np.array(inference["actions"])
     

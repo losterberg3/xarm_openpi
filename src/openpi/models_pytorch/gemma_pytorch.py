@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Callable, Literal, Optional
 
 import pytest
 import torch
@@ -7,6 +7,12 @@ from transformers import GemmaForCausalLM
 from transformers import PaliGemmaForConditionalGeneration
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
+
+# Optional attention streaming for VLAExplain: set from inference script before policy.infer()
+# callback(raw_images_dict, expert_attn_by_layer) where expert_attn_by_layer[layer_idx] is (1, heads, q, k)
+ATTENTION_STREAM_CALLBACK: Optional[Callable[[dict, dict], None]] = None
+ATTENTION_STREAM_IMAGES: Optional[dict] = None
+ATTENTION_STREAM_STEP: int = 0  # set before each infer() so callback can pass it to the viewer
 
 
 class PaliGemmaWithExpertModel(nn.Module):
@@ -198,7 +204,7 @@ class PaliGemmaWithExpertModel(nn.Module):
                 scaling = self.paligemma.language_model.layers[layer_idx].self_attn.scaling
 
                 # Attention computation
-                att_output, _ = modeling_gemma.eager_attention_forward(
+                att_output, attn_weights = modeling_gemma.eager_attention_forward(
                     self.paligemma.language_model.layers[layer_idx].self_attn,
                     query_states,
                     key_states,
@@ -235,13 +241,17 @@ class PaliGemmaWithExpertModel(nn.Module):
                     outputs_embeds.append(out_emb)
                     start_pos = end_pos
 
-                return outputs_embeds
+                return outputs_embeds, attn_weights
+
+            def compute_layer_outputs_only(li, ie, am, pi, ac):
+                return compute_layer_complete(li, ie, am, pi, ac)[0]
 
             # Process all layers with gradient checkpointing if enabled
+            attention_weights_by_layer: dict[int, torch.Tensor] = {}
             for layer_idx in range(num_layers):
                 if use_gradient_checkpointing:
                     inputs_embeds = torch.utils.checkpoint.checkpoint(
-                        compute_layer_complete,
+                        compute_layer_outputs_only,
                         layer_idx,
                         inputs_embeds,
                         attention_mask,
@@ -251,11 +261,17 @@ class PaliGemmaWithExpertModel(nn.Module):
                         preserve_rng_state=False,
                     )
                 else:
-                    inputs_embeds = compute_layer_complete(
+                    inputs_embeds, attn_weights = compute_layer_complete(
                         layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond
                     )
+                    attention_weights_by_layer[layer_idx] = attn_weights.detach()
 
-                # Old code removed - now using compute_layer_complete function above
+            # Optional: stream attention to VLAExplain viewer (set ATTENTION_STREAM_* from inference script)
+            if not use_gradient_checkpointing and ATTENTION_STREAM_CALLBACK is not None and ATTENTION_STREAM_IMAGES is not None:
+                try:
+                    ATTENTION_STREAM_CALLBACK(ATTENTION_STREAM_IMAGES, attention_weights_by_layer)
+                except Exception:
+                    pass  # do not break inference if viewer fails
 
             # final norm
             # Define final norm computation function for gradient checkpointing

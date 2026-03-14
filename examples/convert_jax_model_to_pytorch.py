@@ -24,6 +24,14 @@ Example:
 
     # pi05_droid
     python examples/convert_jax_model_to_pytorch.py --checkpoint_dir /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi05_droid --output_path /home/$USER/.cache/openpi/openpi-assets/checkpoints/pi05_droid_pytorch
+
+Custom modules (e.g. GRU / gated residual):
+    If you added a module like memory_gru (GRUCell) in JAX, do two things:
+    1. Use a config that has that module enabled (e.g. --config-name pi05_gru_addition for gru=True).
+    2. Add the same module in PI0Pytorch when the config flag is set (see memory_gru in pi0_pytorch.py).
+    The conversion script maps JAX param names to PyTorch; for GRUCell we use slice_memory_gru_state_dict.
+    To add another custom module: implement a slice_*_state_dict(projection_params) and merge its result into
+    projection_params in convert_pi0_checkpoint, and add the submodule in PI0Pytorch.__init__ when the config flag is set.
 """
 
 import json
@@ -393,6 +401,37 @@ def slice_gemma_state_dict(state_dict, config, *, num_expert, checkpoint_dir, pi
     return final_state_dict
 
 
+def _param_value(p):
+    """Get raw array from a param that may be wrapped as {'value': array} (NNX state)."""
+    if isinstance(p, dict) and "value" in p:
+        return p["value"]
+    return p
+
+
+def slice_memory_gru_state_dict(projection_params: dict) -> dict:
+    """Convert JAX/Flax NNX GRUCell params to PyTorch nn.GRUCell state dict.
+
+    Flax nnx.GRUCell uses dense_i (in -> 3*hidden, with bias) and dense_h (hidden -> 3*hidden, no bias).
+    PyTorch nn.GRUCell expects weight_ih, weight_hh, bias_ih, bias_hh.
+    """
+    if "memory_gru" not in projection_params:
+        return {}
+    gru = projection_params["memory_gru"]
+    dense_i = gru.get("dense_i", gru)
+    dense_h = gru.get("dense_h", gru)
+    # Handle nested 'value' wrapper from NNX state
+    kernel_i = np.array(_param_value(dense_i["kernel"]))
+    bias_i = np.array(_param_value(dense_i["bias"]))
+    kernel_h = np.array(_param_value(dense_h["kernel"]))
+    # Flax: kernel_i (in_features, 3*hidden), kernel_h (hidden, 3*hidden). PyTorch: weight_ih (3*hidden, in), weight_hh (3*hidden, hidden)
+    return {
+        "memory_gru.weight_ih": torch.from_numpy(kernel_i.T.copy()),
+        "memory_gru.weight_hh": torch.from_numpy(kernel_h.T.copy()),
+        "memory_gru.bias_ih": torch.from_numpy(bias_i.copy()),
+        "memory_gru.bias_hh": torch.from_numpy(np.zeros_like(bias_i, dtype=bias_i.dtype)),
+    }
+
+
 def slice_initial_orbax_checkpoint(checkpoint_dir: str, restore_precision: str | None = None):
     """Load and process params by restoring via JAX model loader first.
     This respects dtype conversions that occur during model restore.
@@ -437,7 +476,7 @@ def convert_pi0_checkpoint(
     # Break down orbax ckpts by restoring via JAX to respect dtype
     initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir, restore_precision="float32")
 
-    # Process projection params
+    # Process projection params (Linear layers: kernel + bias)
     if model_config.pi05:
         keys = [
             "action_in_proj",
@@ -455,21 +494,25 @@ def convert_pi0_checkpoint(
         ]
 
     projection_params = {}
+    proj_tree = initial_params["projection_params"]
     for key in keys:
-        kernel_params = initial_params["projection_params"][key]["kernel"]
-        bias_params = initial_params["projection_params"][key]["bias"]
-        if isinstance(kernel_params, dict):
-            weight = kernel_params["value"]
-            bias = bias_params["value"]
-        else:
-            weight = kernel_params
-            bias = bias_params
+        if key not in proj_tree:
+            continue
+        kernel_params = proj_tree[key]["kernel"]
+        bias_params = proj_tree[key]["bias"]
+        weight = np.array(_param_value(kernel_params))
+        bias = np.array(_param_value(bias_params))
 
-        pytorch_weight_key = f"{key}.weight"
-        pytorch_bias_key = f"{key}.bias"
+        projection_params[f"{key}.weight"] = torch.from_numpy(weight.T)
+        projection_params[f"{key}.bias"] = torch.from_numpy(bias)
 
-        projection_params[pytorch_weight_key] = torch.from_numpy(np.array(weight)).T
-        projection_params[pytorch_bias_key] = torch.from_numpy(np.array(bias))
+    # Process memory_gru (GRUCell) when config.gru is True; JAX uses dense_i / dense_h, PyTorch uses weight_ih/hh, bias_ih/hh
+    if getattr(model_config, "gru", False) and "memory_gru" in proj_tree:
+        gru_params = slice_memory_gru_state_dict(proj_tree)
+        projection_params.update(gru_params)
+        print("Converted memory_gru (GRUCell) parameters.")
+    elif getattr(model_config, "gru", False) and "memory_gru" not in proj_tree:
+        print("Warning: config.gru=True but checkpoint has no 'memory_gru'. Run with --inspect_only to list keys.")
 
     # Create configs based on checkpoint path
     # All models use the same PaliGemma config structure

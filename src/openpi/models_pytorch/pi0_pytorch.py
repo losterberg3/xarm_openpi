@@ -108,6 +108,11 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_in = nn.Linear(2 * action_expert_config.width, action_expert_config.width)
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
+        # Gated recurrent unit over image tokens (used when config.gru=True; see JAX pi0.py embed_prefix)
+        if getattr(config, "gru", False):
+            # Must match JAX Pi0: in_features=2048, hidden_features=2048 (vision token dim)
+            self.memory_gru = nn.GRUCell(input_size=2048, hidden_size=2048)
+
         torch.set_float32_matmul_precision("high")
         self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
 
@@ -184,17 +189,23 @@ class PI0Pytorch(nn.Module):
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        self, images, img_masks, lang_tokens, lang_masks, history: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
+
+        When config.gru is True, the first image (base view) is passed through memory_gru
+        with history; returns (embs, pad_masks, att_masks, updated_history).
+        When config.gru is False, updated_history is None.
         """
         embs = []
         pad_masks = []
         att_masks = []
+        updated_history = None
+        has_gru = getattr(self, "memory_gru", None) is not None
 
-        # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
+        # Process images (first image is base_0_rgb and gets GRU when history is provided)
+        for idx, (img, img_mask) in enumerate(zip(images, img_masks, strict=True)):
 
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
@@ -202,6 +213,18 @@ class PI0Pytorch(nn.Module):
             img_emb = self._apply_checkpoint(image_embed_func, img)
 
             bsize, num_img_embs = img_emb.shape[:2]
+
+            if has_gru and idx == 0:
+                if history is not None:
+                    # GRU step: apply per-patch (same as JAX). history and img_emb are (batch, seq, 2048)
+                    b, s, d = img_emb.shape
+                    history_flat = history.reshape(-1, d)
+                    img_flat = img_emb.reshape(-1, d)
+                    new_h, _ = self.memory_gru(history_flat, img_flat)
+                    img_emb = new_h.reshape(b, s, d)
+                    updated_history = img_emb
+                else:
+                    updated_history = img_emb
 
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
@@ -232,7 +255,7 @@ class PI0Pytorch(nn.Module):
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks
+        return embs, pad_masks, att_masks, updated_history if has_gru else None
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -327,7 +350,9 @@ class PI0Pytorch(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, history=None
+        )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -373,8 +398,12 @@ class PI0Pytorch(nn.Module):
         return F.mse_loss(u_t, v_t, reduction="none")
 
     @torch.no_grad()
-    def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
-        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+    def sample_actions(
+        self, device, observation, noise=None, num_steps=10, history=None
+    ) -> tuple[Tensor, Tensor | None]:
+        """Do a full inference forward and compute the action (batch_size x num_steps x num_motors).
+        When config.gru is True, returns (actions, updated_history) for the policy to pass history on the next call.
+        """
         bsize = observation.state.shape[0]
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
@@ -382,7 +411,9 @@ class PI0Pytorch(nn.Module):
 
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks, updated_history = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, history=history
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -416,7 +447,7 @@ class PI0Pytorch(nn.Module):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
-        return x_t
+        return (x_t, updated_history) if getattr(self, "memory_gru", None) is not None else (x_t, None)
 
     def denoise_step(
         self,
