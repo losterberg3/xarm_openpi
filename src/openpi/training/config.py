@@ -468,7 +468,7 @@ class LeRobotXarmDataConfig(DataConfigFactory):
                         "observation/exterior_image_1_left": "exterior_image_1_left",
                         "observation/exterior_image_2_left": "exterior_image_2_left",
                         "observation/wrist_image_left": "wrist_image_left",
-                        "observation/joint_position": "joint_position",
+                        "observation/joint_position": "eef_position",
                         "observation/gripper_position": "gripper_position",
                         "actions": "actions",
                         "prompt": "prompt",
@@ -512,7 +512,7 @@ class LeRobotXarmDataConfigGRU(DataConfigFactory):
                         "observation/exterior_image_1_left": "exterior_image_1_left",
                         "observation/exterior_image_2_left": "exterior_image_2_left",
                         "observation/wrist_image_left": "wrist_image_left",
-                        "observation/joint_position": "joint_position",
+                        "observation/joint_position": "eef_position",
                         "observation/gripper_position": "gripper_position",
                         "image_latent": "image_latent",
                         "significance": "significance",
@@ -757,7 +757,7 @@ _CONFIGS = [
     TrainConfig(
         name="pi05_xarm_gru",
         model=pi0_config.Pi0Config(action_horizon=50, pi05=True, gru=True),
-        data=LeRobotXarmDataConfig(
+        data=LeRobotXarmDataConfigGRU(
             # Replace with your custom Xarm LeRobot dataset repo id.
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
@@ -1091,7 +1091,7 @@ _CONFIGS = [
             repo_id="lars/xarm_history_exp_v1",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
-                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_gru_addition
+                # Compute norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_gru_addition
                 # Then possibly use those norm stats and change below
                 assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
                 asset_id="lars/xarm_history_exp_v1",
@@ -1135,13 +1135,13 @@ _CONFIGS = [
         ),
         data=LeRobotXarmDataConfig(
             # Replace with your custom Xarm LeRobot dataset repo id.
-            repo_id="lars/xarm_history_exp_v1e",  # change this
+            repo_id="lars/xarm_history_exp_v2",  # change this
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
-                # Comput norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
+                # Compute norm stats of the dataset using-> uv run scripts/compute_norm_stats.py --config-name pi05_xarm_finetune
                 # Then possibly use those norm stats and change below
                 assets_dir="/home/larsosterberg/msl/openpi/assets/pi05_xarm_finetune", # this might not be necessary
-                asset_id="lars/xarm_history_exp_v1",
+                asset_id="lars/xarm_history_exp_v2",
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"), #check this
@@ -1161,13 +1161,13 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,
         num_train_steps=30_000,
-        save_interval=1_000,
+        save_interval=2_000,
         overwrite=True, #keep track of this for storage issues
         batch_size=16,
         wandb_enabled=True,
     ),
     # then to run training ->
-    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=clara_2_17 --overwrite
+    # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_xarm_finetune --exp-name=lars_history_exp_v2 --overwrite
     TrainConfig(
         # This config is for fine-tuning pi05-Xarm on a custom Xarm dataset.
         # Here, we use LeRobot data format (like for all other fine-tuning examples)

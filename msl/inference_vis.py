@@ -45,12 +45,12 @@ def _setup_attention_stream():
             "Convert with: python examples/convert_jax_model_to_pytorch.py --checkpoint_dir <jax_ckpt> --output_path <out>"
         )
         return
-    # Prefer VLAEXPLAIN_PATH; then try msl sibling dir (openpi and VLAExplain both under msl/)
+    # Prefer VLAEXPLAIN_PATH; then try msl sibling (openpi/msl/ -> ../../ = msl/, so msl/VLAExplain)
     vlaexplain_path = os.environ.get("VLAEXPLAIN_PATH", "").strip()
     if not vlaexplain_path or not os.path.isdir(vlaexplain_path):
-        vlaexplain_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "VLAExplain")
+        vlaexplain_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "VLAExplain")
     if not os.path.isdir(vlaexplain_path):
-        vlaexplain_path = os.path.join(os.path.dirname(os.path.abspath(str(checkpoint_dir))), "..", "..", "..", "VLAExplain")
+        vlaexplain_path = os.path.join(os.path.dirname(os.path.abspath(str(checkpoint_dir))), "..", "..", "VLAExplain")
     if os.path.isdir(vlaexplain_path) and vlaexplain_path not in sys.path:
         sys.path.insert(0, vlaexplain_path)
     try:
@@ -148,10 +148,13 @@ while True:
         except Exception:
             pass
 
-    print("Running inference")
     inference = policy.infer(observation, history=history)
     _inference_step += 1
     history = inference.get("history", None)
+    if history is not None:
+        print(history.shape)
+    time.sleep(1)
+
     
 
     

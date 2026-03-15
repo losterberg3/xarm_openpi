@@ -1,4 +1,5 @@
 from collections.abc import Iterator, Sequence
+import io
 import logging
 import multiprocessing
 import os
@@ -10,6 +11,7 @@ import jax.numpy as jnp
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
+import torchvision.transforms as T
 
 import openpi.models.model as _model
 import openpi.training.config as _config
@@ -18,6 +20,58 @@ from openpi.training.droid_rlds_dataset import DroidRldsDataset
 import openpi.transforms as _transforms
 
 T_co = TypeVar("T_co", covariant=True)
+
+# PIL is used for image-dict decoding in the safe HF transform.
+try:
+    from PIL import Image as PILImage
+except ImportError:
+    PILImage = None  # type: ignore[misc, assignment]
+
+
+def _decode_image_dict_to_tensor(d: typing.Any) -> torch.Tensor:
+    """Decode a HuggingFace image dict (path/bytes) to a torch tensor (C, H, W) float [0,1]."""
+    if not isinstance(d, dict) or PILImage is None:
+        return torch.tensor(d)
+    path, bytes_ = d.get("path"), d.get("bytes")
+    if bytes_ is not None:
+        img = PILImage.open(io.BytesIO(bytes_)).convert("RGB")
+    elif path is not None and os.path.isfile(path):
+        img = PILImage.open(path).convert("RGB")
+    else:
+        raise ValueError(f"Image dict has no loadable path or bytes: {list(d.keys())}")
+    return T.functional.to_tensor(img)
+
+
+def _safe_hf_transform_to_torch(items_dict: dict) -> dict:
+    """Like LeRobot's hf_transform_to_torch but never calls torch.tensor() on dicts.
+
+    Image columns in LeRobot/HF are often stored as dicts (path/bytes). The default
+    transform does torch.tensor(dict) and raises 'Could not infer dtype of dict'.
+    Here we decode image dicts to tensors and leave other dict columns unchanged.
+    """
+    to_tensor = T.ToTensor()
+    for key in items_dict:
+        vals = items_dict[key]
+        first = vals[0] if vals else None
+        if isinstance(first, torch.Tensor):
+            continue
+        if PILImage is not None and isinstance(first, PILImage.Image):
+            items_dict[key] = [to_tensor(img) for img in vals]
+        elif first is None:
+            pass
+        elif isinstance(first, dict):
+            out = []
+            for x in vals:
+                if isinstance(x, dict) and ("path" in x or "bytes" in x):
+                    out.append(_decode_image_dict_to_tensor(x))
+                elif isinstance(x, str) or isinstance(x, dict):
+                    out.append(x)
+                else:
+                    out.append(torch.tensor(x))
+            items_dict[key] = out
+        else:
+            items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in vals]
+    return items_dict
 
 
 class Dataset(Protocol[T_co]):
@@ -127,46 +181,59 @@ class FakeDataset(Dataset):
     def __len__(self) -> int:
         return self._num_samples
 
+def _load_latent_from_row(hf_raw: typing.Any, row_idx: int) -> np.ndarray:
+    """Load latent for one row from hf_raw (latent_path or image_latent). Shape (256, 2048)."""
+    row = hf_raw[int(row_idx)]
+    row = row if isinstance(row, dict) else dict(row)
+    latent_path = row.get("latent_path")
+    if latent_path:
+        arr = np.load(latent_path, allow_pickle=True)
+        if getattr(arr, "dtype", None) == object:
+            arr = np.asarray(arr.tolist(), dtype=np.float32)
+        arr = np.asarray(arr)
+    else:
+        lat = row.get("image_latent")
+        if lat is None:
+            raise ValueError(f"missing latent for row {row_idx} (no latent_path and image_latent is None)")
+        arr = np.asarray(lat)
+    if arr.ndim == 3 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim == 1 and arr.size == 256 * 2048:
+        arr = arr.reshape(256, 2048)
+    if arr.shape != (256, 2048):
+        raise ValueError(f"latent has unexpected shape {arr.shape} for row {row_idx}")
+    return arr.astype(np.float32, copy=False)
+
+
 class RandomHistoryDataset(torch.utils.data.Dataset):
+    """Wraps the normal train pipeline and only adds history latents for GRU.
+
+    Uses base[idx] for observation + actions (same as train.py). Actions and
+    observation are entirely produced by LeRobot + transforms; this class only
+    adds the "latents" key for history frames.
+    """
+
     def __init__(self, base_dataset, batch_size, window_size=5, *, action_horizon: int = 50):
         self.base = base_dataset
         self.window_size = window_size
         self.action_horizon = int(action_horizon)
         self.batch_size = batch_size
         self.half = batch_size // 2
-        # Reach through possible wrapper stacks (TransformedDataset, TorchDataLoader wrappers, etc.)
-        # to find the underlying LeRobot HF dataset.
+
         ds = base_dataset
-        # Unwrap our own TransformedDataset wrappers
         while hasattr(ds, "_dataset"):
             ds = ds._dataset
-        # Unwrap LeRobotDataset wrapper (it stores the HF dataset at .hf_dataset)
-        self.hf_dataset = getattr(ds, "hf_dataset", None)
-        if self.hf_dataset is None:
-            # Some wrappers keep the dataset under .dataset
-            inner = getattr(ds, "dataset", None)
-            self.hf_dataset = getattr(inner, "hf_dataset", None) if inner is not None else None
+        self.hf_dataset = getattr(ds, "hf_dataset", None) or getattr(
+            getattr(ds, "dataset", None), "hf_dataset", None
+        )
         if self.hf_dataset is None:
             raise AttributeError(
                 "RandomHistoryDataset: could not find underlying HuggingFace dataset. "
                 f"Got base_dataset={type(base_dataset)}"
             )
-
-        # IMPORTANT: LeRobot's torch formatting transform crashes on dict-typed image columns.
-        # We do NOT call LeRobotDataset.__getitem__. Instead, we fetch raw HF rows and apply the
-        # same TransformedDataset stack ourselves.
         self.hf_raw = self.hf_dataset.with_format(None)
 
-        # Collect the wrapper transform stack so we can apply it ourselves.
-        transforms: list[typing.Callable[[typing.Any], typing.Any]] = []
-        ds_t = base_dataset
-        while hasattr(ds_t, "_transform") and hasattr(ds_t, "_dataset"):
-            transforms.append(ds_t._transform)  # type: ignore[attr-defined]
-            ds_t = ds_t._dataset  # type: ignore[attr-defined]
-        self._transform_stack = transforms  # outer->inner
-
-        # Fast latent-availability mask for HISTORY sampling only.
-        # Prefer latent_path (small string column) if present, else fall back to image_latent != None.
+        # Latent-availability mask for history sampling only.
         self._has_latent = None
         try:
             cols = set(getattr(self.hf_raw, "column_names", []))
@@ -179,138 +246,54 @@ class RandomHistoryDataset(torch.utils.data.Dataset):
             lats = self.hf_raw["image_latent"]
             self._has_latent = np.array([v is not None for v in lats], dtype=bool)
 
-        all_pos = np.where(np.array(self.hf_raw["is_decision"]) == 1)[0]
-        all_neg = np.where(np.array(self.hf_raw["is_decision"]) == 0)[0]
-        self.pos_indices = [
-            idx for idx in all_pos 
-            if self.hf_raw[int(idx)]["index"] >= self.window_size
-        ]
-        self.neg_indices = [
-            idx for idx in all_neg 
-            if self.hf_raw[int(idx)]["index"] >= self.window_size
-        ]
-        # NOTE: Do NOT filter current-frame pools by latent availability.
-        # The latent is only used for history; current frame uses observation+actions.
-        self.pos_indices = np.array(self.pos_indices)
-        self.neg_indices = np.array(self.neg_indices)
-        logging.info(f"Initialized GRU Dataset: {len(self.pos_indices)} positive, {len(self.neg_indices)} negative samples.")
+        is_decision = np.array(self.hf_raw["is_decision"])
+        all_pos = np.where(is_decision == 1)[0]
+        all_neg = np.where(is_decision == 0)[0]
+        index_col = np.array(self.hf_raw["index"])
+        self.pos_indices = np.array([i for i in all_pos if index_col[int(i)] >= self.window_size])
+        self.neg_indices = np.array([i for i in all_neg if index_col[int(i)] >= self.window_size])
+        logging.info(
+            f"Initialized GRU Dataset: {len(self.pos_indices)} positive, {len(self.neg_indices)} negative samples."
+        )
 
     def __len__(self):
         return len(self.base)
 
-    def _get_frame_with_history(self, idx, is_decision):
-        idx_int = int(idx)  # HF datasets don't accept numpy scalar ints
-        raw = self.hf_raw[idx_int]
-        if not isinstance(raw, dict):
-            raw = dict(raw)
-
-        # Decode common LeRobot image dicts {bytes,path} to uint8 HWC arrays.
-        def _decode_image_cell(cell):
-            try:
-                if isinstance(cell, dict) and cell.get("bytes") is not None:
-                    import io
-                    from PIL import Image
-
-                    return np.array(Image.open(io.BytesIO(cell["bytes"])).convert("RGB"))
-            except Exception:
-                pass
-            return cell
-
-        for k in ("exterior_image_1_left", "exterior_image_2_left", "wrist_image_left"):
-            if k in raw:
-                raw[k] = _decode_image_cell(raw[k])
-
-        # Build action sequence (T, action_dim) from per-frame actions in the HF dataset.
-        ep = raw.get("episode_index")
-        actions_seq = []
-        last = None
-        for t in range(self.action_horizon):
-            j = idx_int + t
-            if j >= len(self.hf_raw):
-                break
-            rj = self.hf_raw[int(j)]
-            if not isinstance(rj, dict):
-                rj = dict(rj)
-            if ep is not None and rj.get("episode_index") != ep:
-                break
-            a = np.asarray(rj.get("actions"))
-            if a.ndim == 2 and a.shape[0] == 1:
-                a = a[0]
-            last = a
-            actions_seq.append(a)
-        if not actions_seq:
-            raise ValueError(f"RandomHistoryDataset: no actions found for idx={idx_int}")
-        while len(actions_seq) < self.action_horizon:
-            actions_seq.append(last)
-        raw["actions"] = np.stack(actions_seq, axis=0)
-
-        # Apply transforms inner->outer.
-        sample: typing.Any = raw
-        for t in reversed(self._transform_stack):
-            sample = t(sample)
-        if not isinstance(sample, dict) or "actions" not in sample:
-            raise ValueError(
-                "RandomHistoryDataset: expected transformed sample to be a dict with 'actions'. "
-                f"Got type={type(sample)} keys={list(sample.keys()) if isinstance(sample, dict) else None}"
-            )
-        action = sample["actions"]
+    def _history_indices(self, idx_int: int, is_decision: bool) -> np.ndarray:
         frame_row = self.hf_raw[idx_int]
-        frame_in_ep = frame_row["index"]
-        start_of_ep = idx_int - int(frame_in_ep)
+        frame_in_ep = int(frame_row["index"])
+        start_of_ep = idx_int - frame_in_ep
         past_indices = np.arange(start_of_ep, idx_int)
-
         sig_values = np.array(self.hf_raw[past_indices]["significance"])
         target_val = 1 if is_decision else 0
         valid_pool = past_indices[sig_values == target_val]
-        # Ensure sampled history frames have latents available.
         if self._has_latent is not None and len(valid_pool):
             valid_pool = valid_pool[self._has_latent[valid_pool]]
         if len(valid_pool) == 0:
-            selected = np.full(self.window_size, idx_int, dtype=np.int64)
-        else:
-            selected = np.random.choice(valid_pool, self.window_size, replace=True)
+            return np.full(self.window_size, idx_int, dtype=np.int64)
+        selected = np.random.choice(valid_pool, self.window_size, replace=True)
         selected.sort()
+        return selected
 
-        def _load_latent(row_idx: int) -> np.ndarray:
-            row = self.hf_raw[int(row_idx)]
-            # Preferred: external pointer produced by materialize_latents_to_npy.py
-            latent_path = row.get("latent_path") if isinstance(row, dict) and "latent_path" in row else None
-            if latent_path:
-                arr = np.load(latent_path, allow_pickle=True)
-                # If older files were saved as object arrays, coerce to float32.
-                if getattr(arr, "dtype", None) == object:
-                    arr = np.asarray(arr.tolist(), dtype=np.float32)
-                arr = np.asarray(arr)
-            # Fallback: inline image_latent (original behavior)
-            else:
-                lat = row["image_latent"]
-                arr = np.asarray(lat)
-                if arr.shape == () and lat is None:
-                    raise ValueError(f"missing latent for row {row_idx} (no latent_path and image_latent is None)")
+    def _load_latents(self, indices: np.ndarray) -> np.ndarray:
+        return np.stack([_load_latent_from_row(self.hf_raw, int(i)) for i in indices], axis=0)
 
-            # Normalize shape to (256, 2048). Some files may be (1,256,2048) or flat.
-            if arr.ndim == 3 and arr.shape[0] == 1:
-                arr = arr[0]
-            if arr.ndim == 1 and arr.size == 256 * 2048:
-                arr = arr.reshape(256, 2048)
-            if arr.shape != (256, 2048):
-                raise ValueError(f"latent has unexpected shape {arr.shape} for row {row_idx} (path={latent_path!r})")
-            return arr.astype(np.float32, copy=False)
+    def _get_frame_with_history(self, idx: int, is_decision: bool) -> dict[str, typing.Any]:
+        idx_int = int(idx)
+        sample = self.base[idx_int]
+        if not isinstance(sample, dict):
+            sample = dict(sample) if hasattr(sample, "keys") else {"observation": sample, "actions": getattr(sample, "actions", None)}
+        selected = self._history_indices(idx_int, is_decision)
+        latents = self._load_latents(selected)
+        return {**sample, "latents": latents}
 
-        latents = np.stack([_load_latent(i) for i in selected], axis=0)
-        
-        # Keep full transformed sample (includes observation keys + actions), and add latents.
-        return {**sample, "actions": action, "latents": latents}
-
-    def __getitem__(self, batch_idx):
+    def __getitem__(self, batch_idx: int) -> dict[str, typing.Any]:
         slot_in_batch = batch_idx % self.batch_size
-        
         if slot_in_batch < self.half:
             idx = int(np.random.choice(self.pos_indices))
             return self._get_frame_with_history(idx, is_decision=True)
-        else:
-            idx = int(np.random.choice(self.neg_indices))
-            return self._get_frame_with_history(idx, is_decision=False)
+        idx = int(np.random.choice(self.neg_indices))
+        return self._get_frame_with_history(idx, is_decision=False)
 
 
 def create_torch_dataset(
@@ -330,6 +313,9 @@ def create_torch_dataset(
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
     )
+    # LeRobot's default transform does torch.tensor(x) on every column; image columns
+    # are stored as dicts (path/bytes) and raise "Could not infer dtype of dict".
+    dataset.hf_dataset.set_transform(_safe_hf_transform_to_torch)
 
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])

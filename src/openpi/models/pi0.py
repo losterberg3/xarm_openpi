@@ -104,21 +104,21 @@ class Pi0(_model.BaseModel):
         self.action_out_proj = nnx.Linear(action_expert_config.width, config.action_dim, rngs=rngs)
 
         # GRU init
-        self.memory_gru = nnx.GRUCell(
-            in_features=2048, 
-            hidden_features=2048, 
-            rngs=rngs,
-            # Use float32 params for GRU init: GRUCell uses orthogonal init (QR / geqrf)
-            # which isn't supported for bfloat16 on some backends.
-            param_dtype=jnp.float32
-        )
+        self.gru = config.gru
+        if self.gru:
+            self.memory_gru = nnx.GRUCell(
+                in_features=2048, 
+                hidden_features=2048, 
+                rngs=rngs,
+                param_dtype=jnp.float32
+            )
 
         # This attribute gets automatically set by model.train() and model.eval().
         self.deterministic = True
 
     @at.typecheck
     def embed_prefix(
-        self, obs: _model.Observation, history: at.Array
+        self, obs: _model.Observation, history: at.Array | None
     ) -> tuple[
         at.Float[at.Array, "b s emb"],
         at.Bool[at.Array, "b s"],
@@ -289,7 +289,7 @@ class Pi0(_model.BaseModel):
         self,
         rng: at.KeyArrayLike,
         observation: _model.Observation,
-        history: at.Array,
+        history: at.Array | None,
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,

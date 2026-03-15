@@ -9,7 +9,7 @@ from openpi.shared import download
 from openpi.training import config as _config
 from openpi.models.tokenizer import PaligemmaTokenizer
 
-FPS = 20.0
+FPS = 1.0
 DT = 1.0 / FPS # your timestep
 CONTROL_HZ = 40.0 # keep as a multiple of 10
 ACTION_ROLLOUT = 20
@@ -25,11 +25,11 @@ arm.set_gripper_enable(enable=True)
 arm.set_gripper_mode(0)
 
 
-config = _config.get_config("pi05_xarm")
-checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_xarm_finetune/lars_eef_2_11/20000")
+config = _config.get_config("pi05_xarm_gru")
+checkpoint_dir = download.maybe_download("/home/larsosterberg/msl/openpi/checkpoints/pi05_gru_addition/gru_exp_v1/14999")
 
 # Create a trained policy.
-policy = policy_config.create_trained_policy(config, checkpoint_dir, language_out=False)
+policy = policy_config.create_trained_policy(config, checkpoint_dir)
 
 # Connect to cameras
 ctx = rs.context()
@@ -78,7 +78,7 @@ def get_observation():
         "observation/wrist_image_left": a,
         "observation/gripper_position": g_p,
         "observation/joint_position": state,
-        "prompt": "Grab the yellow bottle and place it on the pink marker",
+        "prompt": "Drop the block in the cup and then knock that same cup over",
     }
     return observation
 
@@ -94,19 +94,21 @@ def interpolate_action(state, goal):
         x, y, z, roll, pitch, yaw = command
         print(x, y, z, roll, pitch, yaw)
 
-        arm.set_servo_cartesian(command, speed=100, mvacc=1000)
+        #arm.set_servo_cartesian(command, speed=100, mvacc=1000)
 
         time_left = (1 / CONTROL_HZ) - (time.perf_counter() - start)
         time.sleep(max(time_left,0))
-       
+
+history = None
 while True:
 
     observation = get_observation()
 
     print("Running inference")
-    inference = policy.infer(observation)
+    inference = policy.infer(observation, history)
     
     action = np.array(inference["actions"])
+    history = np.array(inference["history"])
     
     count = 0
 
@@ -128,9 +130,9 @@ while True:
         cmd_joint_pose[3:6] = cmd_joint_pose[3:6] / np.pi * 180
         
         # execute smooth motion to target via interpolation
-        interpolate_action(state, cmd_joint_pose)
-        #print("command")
-        #print(cmd_joint_pose)
+        arm.set_servo_cartesian(cmd_joint_pose, speed=50, mvacc=500)
+        print("command")
+        print(cmd_joint_pose)
         cmd_gripper_pose = (action[count,6]) * -860 + 850 # unnormalize the gripper action
         arm.set_gripper_position(cmd_gripper_pose)
 

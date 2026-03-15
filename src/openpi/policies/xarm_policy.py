@@ -78,9 +78,16 @@ class XarmInputs(transforms.DataTransformFn):
 class XarmOutputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
-    def __call__(self, data: dict) -> dict:        
-        return {"latents": np.asarray(data["latents"]),
-                "actions": np.asarray(data["actions"][:, :7])}
+    def __call__(self, data: dict) -> dict:
+        out = {}
+        if "actions" in data and data["actions"] is not None:
+            out["actions"] = np.asarray(data["actions"][:, :7])
+        if "latents" in data and data["latents"] is not None:
+            out["latents"] = np.asarray(data["latents"])
+        # History is optional (e.g. first step, or non-GRU configs); include only if present.
+        if "history" in data and data["history"] is not None:
+            out["history"] = np.asarray(data["history"])
+        return out
 
 
              

@@ -26,6 +26,50 @@ logger = logging.getLogger("openpi")
 # Type variable for array types (JAX arrays, PyTorch tensors, or numpy arrays)
 ArrayT = TypeVar("ArrayT", bound=jax.Array | torch.Tensor | np.ndarray)
 
+def _ensure_gru_dense_h_bias_if_needed(params: at.Params) -> at.Params:
+    """Align memory_gru.dense_h with current model: add missing bias key so structure matches.
+
+    Checkpoints saved dense_h with only 'kernel' (no bias). The live model has dense_h with
+    kernel + bias where bias is None (use_bias=False). Add bias=None so the tree matches.
+    """
+    if "memory_gru" not in params:
+        return params
+    gru = params["memory_gru"]
+    if not isinstance(gru, dict) or "dense_h" not in gru:
+        return params
+    dense_h = gru["dense_h"]
+    if not isinstance(dense_h, dict) or "bias" in dense_h:
+        return params
+    dense_h = dict(dense_h)
+    dense_h["bias"] = None
+    gru = dict(gru)
+    gru["dense_h"] = dense_h
+    params = dict(params)
+    params["memory_gru"] = gru
+    logger.info(
+        "Checkpoint missing memory_gru.dense_h.bias key; added bias=None so load matches model structure."
+    )
+    return params
+
+
+def _align_gru_rngs_to_expected(params: at.Params, expected: at.Params) -> at.Params:
+    """Use expected state's RNG leaves so checkpoint load passes shape check.
+
+    Checkpoint may have memory_gru.rngs.default.key with shape (2,); live model expects ().
+    Overwrite params with expected for those leaves so inference load succeeds.
+    """
+    if "memory_gru" not in params or "memory_gru" not in expected:
+        return params
+    gru_got = params["memory_gru"]
+    gru_exp = expected["memory_gru"]
+    if not isinstance(gru_got, dict) or "rngs" not in gru_got or "rngs" not in gru_exp:
+        return params
+    params = dict(params)
+    gru_new = dict(gru_got)
+    gru_new["rngs"] = gru_exp["rngs"]
+    params["memory_gru"] = gru_new
+    return params
+
 
 def _remap_expert_layernorm_keys_if_needed(model, state_dict: dict) -> dict:
     """Remap checkpoint keys from scale-only expert norms to dense (adaRMS) format.
@@ -291,7 +335,10 @@ class BaseModelConfig(abc.ABC):
         graphdef, state = nnx.split(model)
         if remove_extra_params:
             params = ocp.transform_utils.intersect_trees(state.to_pure_dict(), params)
-        at.check_pytree_equality(expected=state.to_pure_dict(), got=params, check_shapes=True, check_dtypes=False)
+        expected_state = state.to_pure_dict()
+        params = _ensure_gru_dense_h_bias_if_needed(params)
+        params = _align_gru_rngs_to_expected(params, expected_state)
+        at.check_pytree_equality(expected=expected_state, got=params, check_shapes=True, check_dtypes=False)
         state.replace_by_pure_dict(params)
         return nnx.merge(graphdef, state)
 

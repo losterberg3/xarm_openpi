@@ -104,7 +104,7 @@ class Policy(BasePolicy):
         start_time = time.monotonic()
 
         latents = None
-        actions = np.zeros((1, 50, 7))
+        actions = None
         if self._latents_out:
             latents = self._get_latents(observation)
         else:
@@ -122,24 +122,32 @@ class Policy(BasePolicy):
 
         outputs = {
             "state": inputs["state"],
-            "actions": actions,
-            "latents": latents,
+
         }
+        if actions is not None:
+            outputs["actions"] = actions
+        if latents is not None:
+            outputs["latents"] = latents
         if history is not None:
             outputs["history"] = history
         model_time = time.monotonic() - start_time
+
+        # Convert tensors/arrays to numpy, but keep history separate from the transform pipeline.
+        history_np = None
         if self._is_pytorch_model:
             history_out = outputs.pop("history", None)
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
             if history_out is not None:
-                outputs["history"] = np.asarray(history_out.detach().cpu().float())
+                history_np = np.asarray(history_out.detach().cpu().float())
         else:
             history_out = outputs.pop("history", None)
             outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
             if history_out is not None:
-                outputs["history"] = np.asarray(history_out)
+                history_np = np.asarray(history_out)
 
         outputs = self._output_transform(outputs)
+        if history_np is not None:
+            outputs["history"] = history_np
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }

@@ -110,12 +110,13 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         # Gated recurrent unit over image tokens (used when config.gru=True; see JAX pi0.py embed_prefix)
-        if getattr(config, "gru", False):
-            # Must match JAX Pi0: in_features=2048, hidden_features=2048 (vision token dim)
+        self.gru = config.gru
+        if self.gru:
             self.memory_gru = nn.GRUCell(input_size=2048, hidden_size=2048)
 
         torch.set_float32_matmul_precision("high")
-        self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
+        # Disable torch.compile on sample_actions for now to avoid Dynamo/fake-tensor
+        # issues with mixed dtypes (bfloat16 vs float32) in GRU and viewer callbacks.
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
@@ -204,7 +205,6 @@ class PI0Pytorch(nn.Module):
         pad_masks = []
         att_masks = []
         updated_history = None
-        has_gru = getattr(self, "memory_gru", None) is not None
 
         # Process images (first image is base_0_rgb and gets GRU when history is provided)
         for idx, (img, img_mask) in enumerate(zip(images, img_masks, strict=True)):
@@ -216,14 +216,17 @@ class PI0Pytorch(nn.Module):
 
             bsize, num_img_embs = img_emb.shape[:2]
 
-            if has_gru and idx == 0:
+            if self.gru and idx == 0:
                 if history is not None:
                     # GRU step: apply per-patch (same as JAX). history and img_emb are (batch, seq, 2048)
                     b, s, d = img_emb.shape
                     history_flat = history.reshape(-1, d)
                     img_flat = img_emb.reshape(-1, d)
-                    new_h, _ = self.memory_gru(history_flat, img_flat)
-                    img_emb = new_h.reshape(b, s, d)
+                    # GRUCell expects (input, hx); keep everything in float32 for stability.
+                    img_flat_f = img_flat.to(dtype=torch.float32)
+                    history_flat_f = history_flat.to(dtype=torch.float32)
+                    new_h = self.memory_gru(img_flat_f, history_flat_f)
+                    img_emb = new_h.to(dtype=img_emb.dtype).reshape(b, s, d)
                     updated_history = img_emb
                 else:
                     updated_history = img_emb
@@ -257,7 +260,7 @@ class PI0Pytorch(nn.Module):
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks, updated_history if has_gru else None
+        return embs, pad_masks, att_masks, updated_history if self.gru else None
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -449,7 +452,7 @@ class PI0Pytorch(nn.Module):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
-        return (x_t, updated_history) if getattr(self, "memory_gru", None) is not None else (x_t, None)
+        return (x_t, updated_history) if self.gru else (x_t, None)
 
     def denoise_step(
         self,
